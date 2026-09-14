@@ -9,8 +9,12 @@ const roboto = Roboto({
 });
 
 export const metadata = {
-  title: "Boutique Admin",
+  title: "administration Pharmacie",
   description: "Interface d'administration pour la gestion de boutique",
+  icons: {
+    icon: "/icon.png",
+    apple: "/apple-icon.png",
+  },
 };
 
 export default function RootLayout({ children }) {

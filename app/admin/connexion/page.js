@@ -100,7 +100,7 @@ export default function Connexion() {
           </div>
           <div>
             <h1 className="font-roboto font-bold text-2xl bg-gradient-to-r from-emerald-800 to-teal-900 bg-clip-text text-transparent uppercase tracking-wider">
-              Boutique Admin
+              pharma Admin
             </h1>
             <p className="text-gray-500 text-sm mt-1">
               Connectez-vous à votre espace pharmacie
