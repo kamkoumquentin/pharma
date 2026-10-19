@@ -79,7 +79,7 @@ export default function RechercheGlobale({ pharmacieId, token }) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Ex: Paracétamol, Doliprane..."
-              className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
+              className="w-full text-black-500 pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
             />
           </div>
           <button

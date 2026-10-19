@@ -9,7 +9,8 @@ import {
   LockClosedIcon, 
   PhotoIcon, 
   MapIcon,
-  ExclamationCircleIcon 
+  EyeIcon,
+  EyeSlashIcon
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
 import { useToast } from "@/app/components/Toast";
@@ -42,13 +43,11 @@ export default function Inscription() {
   const [photoPreview, setPhotoPreview] = useState("");
   const [loading, setLoading] = useState(false);
   const [gpsLoading, setGpsLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   // États pour la validation par code OTP
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [pendingEmail, setPendingEmail] = useState("");
-
-  // Erreur de validation pour le nom
-  const [nomError, setNomError] = useState("");
 
   const handleOtpSuccess = (session) => {
     setShowOtpModal(false);
@@ -71,27 +70,8 @@ export default function Inscription() {
       tab.latitude !== ""
     ) {
       setLoading(true);
-      setNomError("");
 
       try {
-        // Vérification préalable (pre-check) : vérifie si le nom de boutique existe déjà
-        const { data: existingShop, error: checkError } = await supabase
-          .from("pharmacies")
-          .select("id")
-          .ilike("nom", tab.nom.trim())
-          .limit(1);
-
-        if (checkError) {
-          console.warn("Erreur lors de la vérification du nom de boutique:", checkError);
-        }
-
-        if (existingShop && existingShop.length > 0) {
-          setNomError("Ce nom de boutique est déjà pris. Veuillez en choisir un autre.");
-          showToast("Ce nom de boutique est déjà pris. Veuillez en choisir un autre.", "error");
-          setLoading(false);
-          return;
-        }
-
         // 1. Authentification Supabase
         const emailClean = tab.email.trim().toLowerCase();
         const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -118,6 +98,8 @@ export default function Inscription() {
           showToast("Création du compte impossible. Veuillez vérifier vos informations.", "error");
           return;
         }
+
+        console.log("[DIAG] signUp session existante :", !!authData.session);
 
         // 2. Upload de photo sur Supabase Storage si fournie
         let photoUrl = null;
@@ -159,11 +141,14 @@ export default function Inscription() {
           .single();
 
         if (dbError) {
+          console.log("[DIAG] Erreur insert pharmacies :", {
+            code: dbError.code,
+            message: dbError.message,
+          });
           console.error("Erreur insertion table pharmacies:", dbError);
           if (dbError.code === "23505") {
             const detail = (dbError.message || "").toLowerCase();
             if (detail.includes("nom")) {
-              setNomError("Ce nom de boutique est déjà pris. Veuillez en choisir un autre.");
               showToast(`Le nom de pharmacie "${tab.nom}" est déjà utilisé. Veuillez en choisir un autre.`, "error");
             } else {
               showToast("Cette pharmacie ou cette information est déjà enregistrée sur la plateforme.", "error");
@@ -175,6 +160,8 @@ export default function Inscription() {
           }
           return;
         }
+
+        console.log("[DIAG] Insert pharmacies terminé avec succès avant navigation");
 
         if (authData.session) {
           localStorage.setItem("token_pharmacie", authData.session.access_token);
@@ -264,26 +251,13 @@ export default function Inscription() {
             <div className="relative">
               <BuildingStorefrontIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-600/70" />
               <input
-                onChange={(e) => {
-                  settab({ ...tab, nom: e.target.value });
-                  if (nomError) setNomError("");
-                }}
+                onChange={(e) => settab({ ...tab, nom: e.target.value })}
                 required
                 type="text"
-                className={`w-full h-11 pl-11 pr-4 bg-emerald-50/20 border rounded-xl focus:ring-4 outline-none transition text-sm text-gray-700 ${
-                  nomError
-                    ? "border-red-500 focus:border-red-500 focus:ring-red-500/10"
-                    : "border-gray-200 focus:border-emerald-500 focus:ring-emerald-500/10 focus:bg-white"
-                }`}
+                className="w-full h-11 pl-11 pr-4 bg-emerald-50/20 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 focus:bg-white outline-none transition text-sm text-gray-700"
                 placeholder="Ex: Pharmacie du Centre"
               />
             </div>
-            {nomError && (
-              <p className="text-xs text-red-600 flex items-center gap-1.5 mt-1 px-1 font-medium">
-                <ExclamationCircleIcon className="w-4 h-4 text-red-500 shrink-0" />
-                <span>{nomError}</span>
-              </p>
-            )}
           </div>
 
           {/* Email Input */}
@@ -313,11 +287,25 @@ export default function Inscription() {
               <input
                 onChange={(e) => settab({ ...tab, password: e.target.value })}
                 required
-                type="password"
+                type={showPassword ? "text" : "password"}
                 minLength={6}
-                className="w-full h-11 pl-11 pr-4 bg-emerald-50/20 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 focus:bg-white outline-none transition text-sm text-gray-700"
+                autoComplete="new-password"
+                className="w-full h-11 pl-11 pr-11 bg-emerald-50/20 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 focus:bg-white outline-none transition text-sm text-gray-700"
                 placeholder="••••••••"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                aria-pressed={showPassword}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-emerald-700 focus:outline-none focus:text-emerald-700 transition cursor-pointer p-0.5"
+              >
+                {showPassword ? (
+                  <EyeSlashIcon className="w-4 h-4" />
+                ) : (
+                  <EyeIcon className="w-4 h-4" />
+                )}
+              </button>
             </div>
           </div>
 

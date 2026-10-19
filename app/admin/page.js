@@ -34,6 +34,7 @@ export default function Acceuil() {
   const [page, setpage] = useState("l"); // 'l' for stock list, 'm' for modification, 'a' for add
   const [info, setinfo] = useState({ id: "", nom: "", emplacement: "", photo: "" });
   const [token, setToken] = useState("");
+  const [loadingProfile, setLoadingProfile] = useState(true);
   const nav = useRouter();
   const showToast = useToast();
 
@@ -48,11 +49,29 @@ export default function Acceuil() {
           return;
         }
 
-        const { data: profile, error: profError } = await supabase
-          .from("pharmacies")
-          .select("*")
-          .eq("password", user.id)
-          .maybeSingle();
+        const truncatedId = user.id ? user.id.slice(0, 6) : "inconnu";
+        let profile = null;
+        let profError = null;
+        const maxAttempts = 5;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          const res = await supabase
+            .from("pharmacies")
+            .select("*")
+            .eq("password", user.id)
+            .maybeSingle();
+
+          profile = res.data;
+          profError = res.error;
+
+          console.log(`[DIAG] User: ${truncatedId}... | Tentative ${attempt}/${maxAttempts} | Profil trouvé : ${!!profile}`);
+
+          if (profile) break;
+
+          if (attempt < maxAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, 600));
+          }
+        }
 
         if (profError || !profile) {
           showToast("Accès interdit : cette interface est réservée aux pharmaciens.", "error");
@@ -64,6 +83,7 @@ export default function Acceuil() {
 
         setinfo(profile);
         setToken("active");
+        setLoadingProfile(false);
       } catch (error) {
         console.error("Erreur de vérification de la session :", error);
         localStorage.removeItem("token_pharmacie");
@@ -98,6 +118,17 @@ export default function Acceuil() {
     { id: "r", label: "Rechercher un produit", icon: MagnifyingGlassIcon },
     { id: "m", label: "Modifier les infos", icon: PencilIcon },
   ];
+
+  if (loadingProfile) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-gray-50 flex-col gap-4">
+        <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
+        <p className="text-sm font-semibold text-emerald-900 animate-pulse">
+          Vérification de votre compte pharmacie...
+        </p>
+      </div>
+    );
+  }
 
   // Selection de la section centrale
   let ComposantCentral;

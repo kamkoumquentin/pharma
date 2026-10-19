@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { EnvelopeIcon, LockClosedIcon, BuildingStorefrontIcon } from "@heroicons/react/24/solid";
+import { EnvelopeIcon, LockClosedIcon, BuildingStorefrontIcon, EyeIcon, EyeSlashIcon } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
 import { useToast } from "@/app/components/Toast";
 import OtpModal from "@/app/components/OtpModal";
@@ -13,6 +13,7 @@ export default function Connexion() {
   const [loading, setLoading] = useState(false);
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [pendingEmail, setPendingEmail] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const navigate = useRouter();
   const showToast = useToast();
 
@@ -138,11 +139,25 @@ export default function Connexion() {
               <input
                 onChange={enregistrement}
                 id="password"
-                type="password"
+                type={showPassword ? "text" : "password"}
                 required
-                className="w-full h-12 pl-11 pr-4 bg-emerald-50/30 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 focus:bg-white outline-none transition font-sans text-gray-700 placeholder-gray-400"
+                autoComplete="current-password"
+                className="w-full h-12 pl-11 pr-11 bg-emerald-50/30 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 focus:bg-white outline-none transition font-sans text-gray-700 placeholder-gray-400"
                 placeholder="••••••••"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                aria-pressed={showPassword}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-emerald-700 focus:outline-none focus:text-emerald-700 transition cursor-pointer p-0.5"
+              >
+                {showPassword ? (
+                  <EyeSlashIcon className="w-5 h-5" />
+                ) : (
+                  <EyeIcon className="w-5 h-5" />
+                )}
+              </button>
             </div>
           </div>
 
