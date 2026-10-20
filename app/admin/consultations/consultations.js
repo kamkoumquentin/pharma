@@ -22,8 +22,7 @@ export default function Consultations({ pharmacieId, token }) {
         .from("consultations")
         .select(`
           *,
-          medicaments ( id, nom ),
-          utilisateur ( id, nom, prenom, telephone )
+          medicaments ( id, nom )
         `)
         .eq("id_pharmacie", pharmacieId)
         .order("created_at", { ascending: false });
@@ -73,9 +72,7 @@ export default function Consultations({ pharmacieId, token }) {
             <thead className="bg-gray-50/80 text-xs uppercase text-gray-500 font-semibold border-b border-gray-100">
               <tr>
                 <th scope="col" className="px-6 py-4">Date</th>
-                <th scope="col" className="px-6 py-4">Patient</th>
                 <th scope="col" className="px-6 py-4">Médicament Recherché</th>
-                <th scope="col" className="px-6 py-4">Téléphone</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -90,14 +87,8 @@ export default function Consultations({ pharmacieId, token }) {
                         minute: '2-digit' 
                     })}
                   </td>
-                  <td className="px-6 py-4">
-                    {c.utilisateur ? `${c.utilisateur.nom || ''} ${c.utilisateur.prenom || ''}`.trim() || 'Anonyme' : 'Anonyme'}
-                  </td>
                   <td className="px-6 py-4 text-emerald-700 font-medium">
                     {c.medicaments?.nom || 'Non spécifié'}
-                  </td>
-                  <td className="px-6 py-4">
-                    {c.utilisateur?.telephone || '-'}
                   </td>
                 </tr>
               ))}
