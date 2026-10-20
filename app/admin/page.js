@@ -149,7 +149,7 @@ export default function Acceuil() {
   } else if (page === "i") {
     ComposantCentral = <ImportationStock pharmacieId={info.id} onImportSuccess={() => setpage("l")} />;
   } else if (page === "c") {
-    ComposantCentral = <Consultations pharmacieId={info.id} token={token} />;
+    ComposantCentral = <Consultations pharmacieId={info.id} token={token} ville={info.ville} />;
   } else if (page === "r") {
     ComposantCentral = <RechercheGlobale pharmacieId={info.id} token={token} />;
   }
