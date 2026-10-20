@@ -32,7 +32,7 @@ const MedicalMapPinIcon = ({ className = "w-5 h-5" }) => (
 
 export default function Acceuil() {
   const [page, setpage] = useState("l"); // 'l' for stock list, 'm' for modification, 'a' for add
-  const [info, setinfo] = useState({ id: "", nom: "", emplacement: "", photo: "" });
+  const [info, setinfo] = useState({ id: "", nom: "", ville: "", emplacement: "", photo: "" });
   const [token, setToken] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(true);
   const nav = useRouter();
@@ -178,7 +178,9 @@ export default function Acceuil() {
           </h2>
           <p className="text-xs text-emerald-300/80 flex items-center justify-center gap-1 mt-1.5 truncate w-full">
             <MedicalMapPinIcon className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-            <span className="truncate">{info.emplacement || "Non spécifié"}</span>
+            <span className="truncate">
+              {info.ville ? (info.emplacement ? `${info.ville} • ${info.emplacement}` : info.ville) : (info.emplacement || "Non spécifié")}
+            </span>
           </p>
         </div>
 

@@ -33,6 +33,7 @@ export default function Inscription() {
     nom: "",
     email: "",
     password: "",
+    ville: "",
     emplacement: "",
     longitude: "",
     latitude: "",
@@ -65,6 +66,7 @@ export default function Inscription() {
     if (
       tab.nom.trim().length > 0 &&
       tab.email.trim().length > 0 &&
+      tab.ville.trim().length > 0 &&
       tab.password.length >= 6 &&
       tab.longitude !== "" &&
       tab.latitude !== ""
@@ -129,6 +131,7 @@ export default function Inscription() {
           .from("pharmacies")
           .insert({
             nom: tab.nom.trim(),
+            ville: tab.ville.trim(),
             longitude: parseFloat(tab.longitude),
             latitude: parseFloat(tab.latitude),
             photo: photoUrl,
@@ -181,7 +184,7 @@ export default function Inscription() {
       }
     } else {
       showToast(
-        "Veuillez remplir tous les champs obligatoires (nom, email, mot de passe de min 6 caract., et position)",
+        "Veuillez remplir tous les champs obligatoires (nom, email, ville, mot de passe de min 6 caract., et position)",
         "error"
       );
     }
@@ -306,6 +309,24 @@ export default function Inscription() {
                   <EyeIcon className="w-4 h-4" />
                 )}
               </button>
+            </div>
+          </div>
+
+          {/* Ville Input */}
+          <div className="flex flex-col space-y-1">
+            <label className="text-xs font-semibold text-emerald-800 tracking-wide uppercase px-1">
+              Ville *
+            </label>
+            <div className="relative">
+              <MapIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-600/70" />
+              <input
+                value={tab.ville}
+                onChange={(e) => settab({ ...tab, ville: e.target.value })}
+                required
+                type="text"
+                className="w-full h-11 pl-11 pr-4 bg-emerald-50/20 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 focus:bg-white outline-none transition text-sm text-gray-700"
+                placeholder="Ex: Bafoussam, Douala, Yaoundé..."
+              />
             </div>
           </div>
 

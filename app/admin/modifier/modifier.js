@@ -4,7 +4,8 @@ import { useState, useEffect, useRef } from "react";
 import { 
   PencilIcon, 
   PhotoIcon, 
-  ArrowPathIcon 
+  ArrowPathIcon,
+  MapIcon 
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
 import { useToast } from "@/app/components/Toast";
@@ -19,6 +20,7 @@ const MedicalMapPinIcon = ({ className = "w-5 h-5" }) => (
 
 export default function Modification({ info, token, onUpdate }) {
   const [nom, setNom] = useState("");
+  const [ville, setVille] = useState("");
   const [emplacement, setEmplacement] = useState("");
   const [coordonnees, setCoordonnees] = useState({ lat: null, lng: null });
   const [photo, setPhoto] = useState(null);
@@ -34,6 +36,7 @@ export default function Modification({ info, token, onUpdate }) {
   useEffect(() => {
     if (info) {
       setNom(info.nom || "");
+      setVille(info.ville || "");
       setEmplacement(info.emplacement || "");
       setCoordonnees({ lat: info.latitude || null, lng: info.longitude || null });
       setPhotoPreview(info.photo || "");
@@ -74,6 +77,7 @@ export default function Modification({ info, token, onUpdate }) {
     try {
       const modifications = {
         nom: nom.trim(),
+        ville: ville.trim() || null,
         emplacement: emplacement.trim(),
       };
 
@@ -123,6 +127,7 @@ export default function Modification({ info, token, onUpdate }) {
   const annuler = () => {
     if (info) {
       setNom(info.nom || "");
+      setVille(info.ville || "");
       setEmplacement(info.emplacement || "");
       setCoordonnees({ lat: info.latitude || null, lng: info.longitude || null });
       setPhotoPreview(info.photo || "");
@@ -169,6 +174,23 @@ export default function Modification({ info, token, onUpdate }) {
             type="text" 
             placeholder="Nouveau nom" 
           />
+        </div>
+
+        {/* Ville */}
+        <div className="flex flex-col space-y-1">
+          <label className="text-xs font-semibold text-emerald-800 uppercase tracking-wide px-1">
+            Ville
+          </label>
+          <div className="relative">
+            <MapIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-600/70" />
+            <input 
+              value={ville}
+              onChange={(e) => setVille(e.target.value)}
+              className="w-full h-11 pl-11 pr-4 border border-gray-200 rounded-xl text-sm text-gray-700 outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition" 
+              type="text" 
+              placeholder="Ex: Bafoussam, Douala, Yaoundé..." 
+            />
+          </div>
         </div>
 
         {/* Emplacement */}
