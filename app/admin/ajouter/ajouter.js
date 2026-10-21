@@ -21,6 +21,9 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess }) {
   const [image, setImage] = useState(null);
   const [imageName, setImageName] = useState("");
   const [imagePreview, setImagePreview] = useState("");
+  const [existingImages, setExistingImages] = useState([]);
+  const [selectedExistingImage, setSelectedExistingImage] = useState("");
+  const [loadingExistingImages, setLoadingExistingImages] = useState(false);
   const [disponibilite, setDisponibilite] = useState("disponible");
   const [loading, setLoading] = useState(false);
   const fileInputRef = useRef(null);
@@ -46,9 +49,71 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess }) {
     chargerMedicaments();
   }, []);
 
+  useEffect(() => {
+    let isCurrentSelection = true;
+    setExistingImages([]);
+    setSelectedExistingImage("");
+
+    if (!selectedMed || selectedMed === "new") {
+      setLoadingExistingImages(false);
+      return () => {
+        isCurrentSelection = false;
+      };
+    }
+
+    const chargerImagesExistantes = async () => {
+      setLoadingExistingImages(true);
+      try {
+        const { data, error } = await supabase
+          .from("offres")
+          .select("image")
+          .eq("id_medicament", selectedMed)
+          .not("image", "is", null);
+
+        if (error) throw error;
+
+        if (isCurrentSelection) {
+          const urls = [...new Set(
+            (data || [])
+              .map((offre) => offre.image)
+              .filter((url) => typeof url === "string" && url.trim())
+          )];
+          setExistingImages(urls);
+        }
+      } catch (error) {
+        console.error("Erreur lors du chargement des images existantes :", error);
+        if (isCurrentSelection) {
+          setExistingImages([]);
+          showToast("Impossible de charger les images existantes. Vous pouvez téléverser une nouvelle image.", "error");
+        }
+      } finally {
+        if (isCurrentSelection) {
+          setLoadingExistingImages(false);
+        }
+      }
+    };
+
+    chargerImagesExistantes();
+
+    return () => {
+      isCurrentSelection = false;
+    };
+  }, [selectedMed, showToast]);
+
+  const handleMedChange = (e) => {
+    setSelectedMed(e.target.value);
+    setExistingImages([]);
+    setSelectedExistingImage("");
+    setImage(null);
+    setImageName("");
+    setImagePreview("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
+      setSelectedExistingImage("");
       setImage(file);
       setImageName(file.name);
       setImagePreview(URL.createObjectURL(file));
@@ -73,8 +138,8 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess }) {
       return;
     }
 
-    if (!image) {
-      showToast("Veuillez charger une photo du médicament", "error");
+    if (!selectedExistingImage && !image) {
+      showToast("Veuillez sélectionner une image existante ou téléverser une photo du médicament.", "error");
       return;
     }
 
@@ -111,19 +176,27 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess }) {
         return;
       }
 
-      // Upload de l'image du produit vers Supabase Storage
-      let imageUrl = "";
-      const ext = image.name.split('.').pop();
-      const filename = `produits/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
-      const { error: uploadErr } = await supabase.storage
-        .from("offres-images")
-        .upload(filename, image, { upsert: true });
+      let imageUrl = selectedExistingImage;
+      if (image) {
+        const ext = image.name.split('.').pop();
+        const filename = `produits/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
+        const { error: uploadErr } = await supabase.storage
+          .from("offres-images")
+          .upload(filename, image, { upsert: true });
 
-      if (uploadErr) {
-        console.warn("Erreur storage upload (falling back):", uploadErr);
+        if (uploadErr) {
+          console.error("Erreur lors du téléversement de l'image :", uploadErr);
+          showToast("Impossible de téléverser l’image. L’offre n’a pas été enregistrée.", "error");
+          return;
+        }
+
+        const { data: urlData } = supabase.storage.from("offres-images").getPublicUrl(filename);
+        imageUrl = urlData?.publicUrl || "";
+        if (!imageUrl) {
+          showToast("Impossible de récupérer l’URL de l’image. L’offre n’a pas été enregistrée.", "error");
+          return;
+        }
       }
-      const { data: urlData } = supabase.storage.from("offres-images").getPublicUrl(filename);
-      imageUrl = urlData?.publicUrl || "";
 
       // Insérer l'offre dans 'offres'
       const { error: insertOffreErr } = await supabase
@@ -147,6 +220,9 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess }) {
       setImage(null);
       setImageName("");
       setImagePreview("");
+      setExistingImages([]);
+      setSelectedExistingImage("");
+      if (fileInputRef.current) fileInputRef.current.value = "";
       setDisponibilite("disponible");
       
       chargerMedicaments();
@@ -190,7 +266,7 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess }) {
             <div className="relative">
               <select 
                 value={selectedMed} 
-                onChange={(e) => setSelectedMed(e.target.value)}
+                onChange={handleMedChange}
                 required
                 className="w-full h-11 pl-4 pr-10 appearance-none bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 focus:bg-white transition cursor-pointer font-medium"
               >
@@ -256,11 +332,44 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess }) {
           </div>
         </div>
 
-        {/* Téléchargement d'Image */}
+        {/* Sélection de l'image */}
         <div className="flex flex-col space-y-1">
           <label className="text-xs font-semibold text-emerald-800 uppercase tracking-wide px-1">
             Photo de la boîte *
           </label>
+          {loadingExistingImages && (
+            <p className="text-xs text-gray-400">Recherche des images existantes...</p>
+          )}
+          {existingImages.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-gray-600">Réutiliser une image existante</p>
+              <div className="flex flex-wrap gap-3">
+                {existingImages.map((url) => (
+                  <button
+                    key={url}
+                    type="button"
+                    onClick={() => {
+                      setSelectedExistingImage(url);
+                      setImage(null);
+                      setImageName("");
+                      setImagePreview("");
+                      if (fileInputRef.current) fileInputRef.current.value = "";
+                    }}
+                    aria-pressed={selectedExistingImage === url}
+                    aria-label={`Réutiliser cette image${selectedExistingImage === url ? " (sélectionnée)" : ""}`}
+                    className={`h-20 w-20 overflow-hidden rounded-lg border-2 bg-white transition ${
+                      selectedExistingImage === url
+                        ? "border-emerald-600 ring-2 ring-emerald-500/20"
+                        : "border-gray-200 hover:border-emerald-400"
+                    }`}
+                  >
+                    <img src={url} alt="Image existante du médicament" className="h-full w-full object-cover" />
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs font-medium text-gray-600">Ou téléverser une nouvelle image</p>
+            </div>
+          )}
           <input 
             type="file" 
             accept="image/*"
