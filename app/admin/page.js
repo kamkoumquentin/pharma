@@ -35,8 +35,22 @@ export default function Acceuil() {
   const [info, setinfo] = useState({ id: "", nom: "", ville: "", emplacement: "", photo: "" });
   const [token, setToken] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(true);
+  const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
   const nav = useRouter();
   const showToast = useToast();
+
+  useEffect(() => {
+    if (!isLogoutConfirmOpen) return;
+
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        setIsLogoutConfirmOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [isLogoutConfirmOpen]);
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -220,7 +234,7 @@ export default function Acceuil() {
           </button>
 
           <button
-            onClick={deconnexion}
+            onClick={() => setIsLogoutConfirmOpen(true)}
             className="w-full flex items-center px-4 py-2.5 rounded-xl text-xs font-bold text-rose-300 hover:bg-rose-950/20 hover:text-rose-200 transition cursor-pointer"
           >
             <ArrowLeftStartOnRectangleIcon className="w-4 h-4 mr-2" />
@@ -247,6 +261,44 @@ export default function Acceuil() {
         </div>
       </main>
 
+      {isLogoutConfirmOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-gray-950/60 backdrop-blur-sm" />
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="logout-confirm-title"
+            aria-describedby="logout-confirm-message"
+            className="relative z-10 w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 shadow-2xl"
+          >
+            <h2 id="logout-confirm-title" className="text-lg font-bold text-gray-800">
+              Confirmer la déconnexion
+            </h2>
+            <p id="logout-confirm-message" className="mt-3 text-sm text-gray-600">
+              Voulez-vous vraiment vous déconnecter de votre compte ?
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsLogoutConfirmOpen(false)}
+                className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-600 transition hover:bg-gray-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsLogoutConfirmOpen(false);
+                  deconnexion();
+                }}
+                className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-700"
+              >
+                Confirmer la déconnexion
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
