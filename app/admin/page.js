@@ -6,7 +6,6 @@ import {
   PlusCircleIcon, 
   Squares2X2Icon, 
   ArrowLeftStartOnRectangleIcon, 
-  ArrowLeftIcon,
   DocumentTextIcon,
   UsersIcon,
   MagnifyingGlassIcon
@@ -224,14 +223,6 @@ export default function Acceuil() {
 
         {/* Pied de Sidebar */}
         <div className="p-4 border-t border-emerald-900/40 space-y-1.5 bg-emerald-950/60">
-          
-          <button
-            onClick={() => nav.push("/admin/connexion")}
-            className="w-full flex items-center px-4 py-2.5 rounded-xl text-xs font-semibold text-emerald-200/60 hover:text-emerald-200 hover:bg-emerald-900/20 transition cursor-pointer"
-          >
-            <ArrowLeftIcon className="w-4 h-4 mr-2" />
-            Retour connexion
-          </button>
 
           <button
             onClick={() => setIsLogoutConfirmOpen(true)}

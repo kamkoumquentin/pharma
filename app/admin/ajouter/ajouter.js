@@ -5,7 +5,8 @@ import {
   PlusCircleIcon, 
   ChevronDownIcon, 
   PhotoIcon, 
-  ArrowLeftIcon 
+  ArrowLeftIcon,
+  XMarkIcon
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
 import { useToast } from "@/app/components/Toast";
@@ -24,6 +25,8 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess }) {
   const [existingImages, setExistingImages] = useState([]);
   const [selectedExistingImage, setSelectedExistingImage] = useState("");
   const [loadingExistingImages, setLoadingExistingImages] = useState(false);
+  const [imageToEnlarge, setImageToEnlarge] = useState(null);
+  const [imagePreviewError, setImagePreviewError] = useState(false);
   const [disponibilite, setDisponibilite] = useState("disponible");
   const [loading, setLoading] = useState(false);
   const fileInputRef = useRef(null);
@@ -48,6 +51,19 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess }) {
   useEffect(() => {
     chargerMedicaments();
   }, []);
+
+  useEffect(() => {
+    if (!imageToEnlarge) return;
+
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        setImageToEnlarge(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [imageToEnlarge]);
 
   useEffect(() => {
     let isCurrentSelection = true;
@@ -118,6 +134,11 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess }) {
       setImageName(file.name);
       setImagePreview(URL.createObjectURL(file));
     }
+  };
+
+  const ouvrirApercuImage = (src, alt) => {
+    setImagePreviewError(false);
+    setImageToEnlarge({ src, alt });
   };
 
   const ajouterOffre = async (e) => {
@@ -345,26 +366,39 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess }) {
               <p className="text-xs font-medium text-gray-600">Réutiliser une image existante</p>
               <div className="flex flex-wrap gap-3">
                 {existingImages.map((url) => (
-                  <button
-                    key={url}
-                    type="button"
-                    onClick={() => {
-                      setSelectedExistingImage(url);
-                      setImage(null);
-                      setImageName("");
-                      setImagePreview("");
-                      if (fileInputRef.current) fileInputRef.current.value = "";
-                    }}
-                    aria-pressed={selectedExistingImage === url}
-                    aria-label={`Réutiliser cette image${selectedExistingImage === url ? " (sélectionnée)" : ""}`}
-                    className={`h-20 w-20 overflow-hidden rounded-lg border-2 bg-white transition ${
-                      selectedExistingImage === url
-                        ? "border-emerald-600 ring-2 ring-emerald-500/20"
-                        : "border-gray-200 hover:border-emerald-400"
-                    }`}
-                  >
-                    <img src={url} alt="Image existante du médicament" className="h-full w-full object-cover" />
-                  </button>
+                  <div key={url} className="flex flex-col items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => ouvrirApercuImage(url, "Image existante du médicament")}
+                      aria-label="Agrandir l’image existante du médicament"
+                      className={`h-20 w-20 overflow-hidden rounded-lg border-2 bg-white transition cursor-zoom-in ${
+                        selectedExistingImage === url
+                          ? "border-emerald-600 ring-2 ring-emerald-500/20"
+                          : "border-gray-200 hover:border-emerald-400"
+                      }`}
+                    >
+                      <img src={url} alt="Image existante du médicament" className="h-full w-full object-cover" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedExistingImage(url);
+                        setImage(null);
+                        setImageName("");
+                        setImagePreview("");
+                        if (fileInputRef.current) fileInputRef.current.value = "";
+                      }}
+                      aria-pressed={selectedExistingImage === url}
+                      aria-label={selectedExistingImage === url ? "Image sélectionnée" : "Sélectionner cette image"}
+                      className={`rounded-md px-2 py-1 text-[10px] font-semibold transition ${
+                        selectedExistingImage === url
+                          ? "bg-emerald-50 text-emerald-700"
+                          : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                      }`}
+                    >
+                      {selectedExistingImage === url ? "Sélectionnée" : "Sélectionner"}
+                    </button>
+                  </div>
                 ))}
               </div>
               <p className="text-xs font-medium text-gray-600">Ou téléverser une nouvelle image</p>
@@ -379,9 +413,14 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess }) {
           />
           {imagePreview ? (
             <div className="relative border border-gray-200 rounded-xl p-4 bg-gray-50 flex items-center space-x-4">
-              <div className="w-20 h-20 rounded-lg overflow-hidden border border-gray-200 bg-white flex-shrink-0 flex items-center justify-center">
+              <button
+                type="button"
+                onClick={() => ouvrirApercuImage(imagePreview, "Aperçu de la boîte du médicament")}
+                aria-label="Agrandir l’aperçu de la nouvelle image"
+                className="w-20 h-20 rounded-lg overflow-hidden border border-gray-200 bg-white flex-shrink-0 flex items-center justify-center cursor-zoom-in"
+              >
                 <img src={imagePreview} alt="Aperçu boîte" className="w-full h-full object-cover" />
-              </div>
+              </button>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold text-gray-700 truncate">{imageName}</p>
                 <p className="text-[10px] text-emerald-600 font-medium">Prêt à être téléversé</p>
@@ -431,6 +470,43 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess }) {
         </div>
 
       </form>
+      {imageToEnlarge && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-gray-950/80 p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setImageToEnlarge(null);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-label="Aperçu agrandi de l’image"
+            className="relative flex max-h-[90vh] w-full max-w-5xl flex-col items-center rounded-2xl bg-white p-4 pt-14 shadow-2xl"
+          >
+            <button
+              type="button"
+              onClick={() => setImageToEnlarge(null)}
+              aria-label="Fermer l’aperçu agrandi"
+              className="absolute right-3 top-3 flex items-center gap-1 rounded-lg bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-200"
+            >
+              <XMarkIcon className="h-5 w-5" />
+              Fermer
+            </button>
+            {imagePreviewError ? (
+              <p role="alert" className="py-12 text-sm font-medium text-gray-600">
+                Impossible de charger cette image. Elle est peut-être indisponible ou dans un format non pris en charge.
+              </p>
+            ) : (
+              <img
+                src={imageToEnlarge.src}
+                alt={imageToEnlarge.alt}
+                onError={() => setImagePreviewError(true)}
+                className="max-h-[calc(90vh-6rem)] max-w-full object-contain"
+              />
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }
