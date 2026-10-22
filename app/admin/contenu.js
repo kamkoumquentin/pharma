@@ -29,7 +29,27 @@ export default function Centrale({ pharmacieId, token }) {
   const [editImageName, setEditImageName] = useState("");
   const [editImagePreview, setEditImagePreview] = useState("");
   const [saving, setSaving] = useState(false);
+  const [imageToEnlarge, setImageToEnlarge] = useState(null);
+  const [imagePreviewError, setImagePreviewError] = useState(false);
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!imageToEnlarge) return;
+
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        setImageToEnlarge(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [imageToEnlarge]);
+
+  const ouvrirApercuImage = (src, alt) => {
+    setImagePreviewError(false);
+    setImageToEnlarge({ src, alt });
+  };
 
   const chargerProduits = async () => {
     if (!pharmacieId) return;
@@ -231,11 +251,21 @@ export default function Centrale({ pharmacieId, token }) {
                     <td className="py-3.5 px-6">
                       <div className="w-11 h-11 bg-gray-50 border border-gray-200 rounded-xl overflow-hidden shadow-inner flex items-center justify-center">
                         {produit.image ? (
-                          <img 
-                            src={produit.image} 
-                            alt={produit.nom} 
-                            className="w-full h-full object-cover" 
-                          />
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              ouvrirApercuImage(produit.image, produit.nom);
+                            }}
+                            aria-label={`Agrandir l’image de ${produit.nom}`}
+                            className="h-full w-full cursor-zoom-in"
+                          >
+                            <img
+                              src={produit.image}
+                              alt={produit.nom}
+                              className="h-full w-full object-cover"
+                            />
+                          </button>
                         ) : (
                           <span className="text-[10px] text-gray-400">No Image</span>
                         )}
@@ -284,6 +314,44 @@ export default function Centrale({ pharmacieId, token }) {
           </div>
         )}
       </div>
+
+      {imageToEnlarge && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-950/80 p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setImageToEnlarge(null);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-label="Aperçu agrandi de l’image"
+            className="relative flex max-h-[90vh] w-full max-w-5xl flex-col items-center rounded-2xl bg-white p-4 pt-14 shadow-2xl"
+          >
+            <button
+              type="button"
+              onClick={() => setImageToEnlarge(null)}
+              aria-label="Fermer l’aperçu agrandi"
+              className="absolute right-3 top-3 flex items-center gap-1 rounded-lg bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-200"
+            >
+              <XMarkIcon className="h-5 w-5" />
+              Fermer
+            </button>
+            {imagePreviewError ? (
+              <p role="alert" className="py-12 text-sm font-medium text-gray-600">
+                Impossible de charger cette image. Elle est peut-être indisponible ou dans un format non pris en charge.
+              </p>
+            ) : (
+              <img
+                src={imageToEnlarge.src}
+                alt={imageToEnlarge.alt}
+                onError={() => setImagePreviewError(true)}
+                className="max-h-[calc(90vh-6rem)] max-w-full object-contain"
+              />
+            )}
+          </section>
+        </div>
+      )}
 
       {/* MODAL DE MODIFICATION */}
       {isEditModalOpen && currentOffer && (
