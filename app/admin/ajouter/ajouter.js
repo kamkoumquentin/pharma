@@ -245,7 +245,7 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess, onModifierOf
         imageTeleversee = `produits/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
         const { error: uploadErr } = await supabase.storage
           .from("offres-images")
-          .upload(imageTeleversee, image, { upsert: true });
+          .upload(imageTeleversee, image);
 
         if (uploadErr) {
           imageTeleversee = null;

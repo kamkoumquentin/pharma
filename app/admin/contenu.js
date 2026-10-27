@@ -135,7 +135,7 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
           const filename = `produits/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
           const { error: upErr } = await supabase.storage
             .from("offres-images")
-            .upload(filename, editImage, { upsert: true });
+            .upload(filename, editImage);
 
           if (!upErr) {
             const { data: urlData } = supabase.storage

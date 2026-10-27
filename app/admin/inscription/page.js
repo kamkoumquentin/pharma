@@ -76,7 +76,7 @@ export default function Inscription() {
     try {
       const { error: uploadError } = await supabase.storage
         .from("pharmacie-photos")
-        .upload(filename, tab.photo, { upsert: true });
+        .upload(filename, tab.photo);
 
       if (uploadError) {
         console.warn("Envoi du logo refusé par le stockage :", uploadError);

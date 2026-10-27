@@ -312,7 +312,7 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
           const filename = `produits/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
           const { error: upErr } = await supabase.storage
             .from("offres-images")
-            .upload(filename, item.newImageFile, { upsert: true });
+            .upload(filename, item.newImageFile);
 
           if (!upErr) {
             const { data: urlData } = supabase.storage

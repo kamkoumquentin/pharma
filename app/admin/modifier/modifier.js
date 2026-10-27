@@ -91,7 +91,7 @@ export default function Modification({ info, token, onUpdate }) {
           const filename = `logos/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
           const { error: upErr } = await supabase.storage
             .from("pharmacie-photos")
-            .upload(filename, photo, { upsert: true });
+            .upload(filename, photo);
 
           if (upErr) {
             console.warn("Envoi du nouveau logo refusé par le stockage :", upErr);
