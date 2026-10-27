@@ -285,12 +285,17 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
     let createdCount = 0;
     let updatedCount = 0;
     const nomsEnErreur = [];
+    // Lignes enregistrées mais photo non envoyée : comptées à part, jamais
+    // comme un succès complet.
+    const nomsCreesSansImage = [];
+    const nomsMajSansImage = [];
 
     for (let i = 0; i < selection.length; i++) {
       const item = selection[i];
       setImportMessage(`Importation de ${item.nom} (${i + 1}/${selection.length})...`);
       let imageImportee = null;
       let modificationTentee = false;
+      let erreurImage = null;
 
       try {
         if (!pharmacieId) {
@@ -314,14 +319,24 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
             .from("offres-images")
             .upload(filename, item.newImageFile);
 
-          if (!upErr) {
+          if (upErr) {
+            console.warn("Envoi de l'image refusé par le stockage :", upErr);
+            erreurImage = upErr.message || "le stockage a refusé l'envoi";
+          } else {
             const { data: urlData } = supabase.storage
               .from("offres-images")
               .getPublicUrl(filename);
             if (urlData?.publicUrl) {
               imageUrl = urlData.publicUrl;
               imageImportee = filename;
+            } else {
+              erreurImage = "URL publique de l'image indisponible";
+              console.warn("Aucune URL publique pour", filename);
             }
+          }
+
+          if (erreurImage) {
+            showToast(`L'image de ${item.nom} n'a pas pu être envoyée (${erreurImage}).`, "error");
           }
         }
 
@@ -350,7 +365,11 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
             .eq("id", offreExistante.id);
 
           if (upErr) throw upErr;
-          updatedCount++;
+          if (erreurImage) {
+            nomsMajSansImage.push(item.nom);
+          } else {
+            updatedCount++;
+          }
         } else {
           const { error: insErr } = await supabase
             .from("offres")
@@ -363,7 +382,11 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
             });
 
           if (insErr) throw insErr;
-          createdCount++;
+          if (erreurImage) {
+            nomsCreesSansImage.push(item.nom);
+          } else {
+            createdCount++;
+          }
         }
       } catch (error) {
         // Ligne non enregistrée. Sur une création, la photo téléversée pour
@@ -390,12 +413,22 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
     const resume = [];
     if (createdCount > 0) resume.push(`${createdCount} créé(s)`);
     if (updatedCount > 0) resume.push(`${updatedCount} mis à jour`);
+    if (nomsCreesSansImage.length > 0) {
+      resume.push(`${nomsCreesSansImage.length} créée(s) sans image (${nomsCreesSansImage.join(", ")})`);
+    }
+    if (nomsMajSansImage.length > 0) {
+      resume.push(`${nomsMajSansImage.length} mise(s) à jour sans image (${nomsMajSansImage.join(", ")})`);
+    }
     if (nomsEnErreur.length > 0) {
       resume.push(`${nomsEnErreur.length} en erreur (${nomsEnErreur.join(", ")})`);
     }
 
     if (resume.length > 0) {
-      showToast(`Import terminé : ${resume.join(", ")}.`, nomsEnErreur.length > 0 ? "error" : "success");
+      const sansImage = nomsCreesSansImage.length + nomsMajSansImage.length;
+      showToast(
+        `Import terminé : ${resume.join(", ")}.`,
+        nomsEnErreur.length > 0 ? "error" : sansImage > 0 ? "info" : "success"
+      );
     } else {
       showToast("Aucun médicament importé.", "error");
     }

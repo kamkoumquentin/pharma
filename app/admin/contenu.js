@@ -129,6 +129,7 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
     setSaving(true);
     try {
       let imageUrl = editImagePreview;
+      let erreurImage = null;
       if (editImage) {
         try {
           const ext = editImage.name.split('.').pop();
@@ -137,14 +138,28 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
             .from("offres-images")
             .upload(filename, editImage);
 
-          if (!upErr) {
+          if (upErr) {
+            console.warn("Envoi de l'image refusé par le stockage :", upErr);
+            erreurImage = upErr.message || "le stockage a refusé l'envoi";
+          } else {
             const { data: urlData } = supabase.storage
               .from("offres-images")
               .getPublicUrl(filename);
-            imageUrl = urlData?.publicUrl || imageUrl;
+            const url = urlData?.publicUrl || null;
+            if (!url) {
+              erreurImage = "URL publique de l'image indisponible";
+              console.warn("Aucune URL publique pour", filename);
+            } else {
+              imageUrl = url;
+            }
           }
         } catch (storageErr) {
           console.error("Erreur upload image offre:", storageErr);
+          erreurImage = storageErr?.message || "erreur inattendue pendant l'envoi";
+        }
+
+        if (erreurImage) {
+          console.warn("Image de l'offre non envoyée :", erreurImage);
         }
       }
 
@@ -157,9 +172,27 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
         })
         .eq("id", currentOffer.id);
 
-      if (updateErr) throw updateErr;
+      // Aucun fichier n'est supprimé : une photo peut être partagée entre
+      // plusieurs offres ; l'ancienne URL reste enregistrée si l'envoi a échoué.
+      if (updateErr) {
+        console.error("Erreur mise à jour offre :", updateErr);
+        showToast(
+          erreurImage
+            ? `L'image n'a pas pu être envoyée (${erreurImage}) et aucune modification n'a été enregistrée.`
+            : "Erreur lors de la mise à jour.",
+          "error"
+        );
+        return;
+      }
 
-      showToast("Médicament mis à jour avec succès !", "success");
+      if (erreurImage) {
+        showToast(
+          `L'image n'a pas pu être envoyée (${erreurImage}) : prix et disponibilité enregistrés.`,
+          "info"
+        );
+      } else {
+        showToast("Médicament mis à jour avec succès !", "success");
+      }
       fermerEdition();
       chargerProduits();
     } catch (error) {
