@@ -35,6 +35,7 @@ export default function Acceuil() {
   const [token, setToken] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
+  const [offreAModifier, setOffreAModifier] = useState(null);
   const nav = useRouter();
   const showToast = useToast();
 
@@ -108,6 +109,7 @@ export default function Acceuil() {
   }, [nav, showToast]);
 
   const naviger = (idPage) => {
+    setOffreAModifier(null);
     setpage(idPage);
   };
 
@@ -146,7 +148,15 @@ export default function Acceuil() {
   // Selection de la section centrale
   let ComposantCentral;
   if (page === "l" || page === "p") {
-    ComposantCentral = <Centrale pharmacieId={info.id} token={token} />;
+    ComposantCentral = (
+      <Centrale
+        key={offreAModifier ? `stock-${offreAModifier.id}` : "stock"}
+        pharmacieId={info.id}
+        token={token}
+        offreAModifier={offreAModifier}
+        onOffreAModifierConsommee={() => setOffreAModifier(null)}
+      />
+    );
   } else if (page === "m") {
     ComposantCentral = (
       <Modification 
@@ -158,9 +168,19 @@ export default function Acceuil() {
       />
     );
   } else if (page === "a") {
-    ComposantCentral = <Ajouter pharmacieId={info.id} token={token} onAddSuccess={() => setpage("l")} />;
+    ComposantCentral = (
+      <Ajouter
+        pharmacieId={info.id}
+        token={token}
+        onAddSuccess={() => naviger("l")}
+        onModifierOffre={(offre) => {
+          setOffreAModifier(offre);
+          setpage("p");
+        }}
+      />
+    );
   } else if (page === "i") {
-    ComposantCentral = <ImportationStock pharmacieId={info.id} onImportSuccess={() => setpage("l")} />;
+    ComposantCentral = <ImportationStock pharmacieId={info.id} onImportSuccess={() => naviger("l")} />;
   } else if (page === "c") {
     ComposantCentral = <Consultations pharmacieId={info.id} token={token} ville={info.ville} />;
   } else if (page === "r") {

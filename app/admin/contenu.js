@@ -13,21 +13,23 @@ import {
 import { supabase } from "@/app/lib/supabaseClient";
 import { useToast } from "@/app/components/Toast";
 
-export default function Centrale({ pharmacieId, token }) {
+export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAModifierConsommee }) {
   const [lignes, setLignes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all"); // 'all', 'disponible', 'indisponible'
   const showToast = useToast();
 
-  // États pour la modal d'édition
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [currentOffer, setCurrentOffer] = useState(null);
-  const [editPrix, setEditPrix] = useState("");
-  const [editDispo, setEditDispo] = useState("disponible");
+  // États pour la modal d'édition. Une demande de modification arrivant du
+  // formulaire d'ajout (offre déjà en catalogue) initialise la modal : le
+  // composant est remonté via sa clé, donc aucun effet de synchronisation.
+  const [isEditModalOpen, setIsEditModalOpen] = useState(Boolean(offreAModifier));
+  const [currentOffer, setCurrentOffer] = useState(offreAModifier || null);
+  const [editPrix, setEditPrix] = useState(offreAModifier?.prix ?? "");
+  const [editDispo, setEditDispo] = useState(offreAModifier?.disponibilite || "disponible");
   const [editImage, setEditImage] = useState(null);
   const [editImageName, setEditImageName] = useState("");
-  const [editImagePreview, setEditImagePreview] = useState("");
+  const [editImagePreview, setEditImagePreview] = useState(offreAModifier?.image || "");
   const [saving, setSaving] = useState(false);
   const [imageToEnlarge, setImageToEnlarge] = useState(null);
   const [imagePreviewError, setImagePreviewError] = useState(false);
@@ -111,6 +113,11 @@ export default function Centrale({ pharmacieId, token }) {
     setIsEditModalOpen(true);
   };
 
+  const fermerEdition = () => {
+    setIsEditModalOpen(false);
+    if (offreAModifier && onOffreAModifierConsommee) onOffreAModifierConsommee();
+  };
+
   const handleEditSubmit = async (e) => {
     e.preventDefault();
 
@@ -153,7 +160,7 @@ export default function Centrale({ pharmacieId, token }) {
       if (updateErr) throw updateErr;
 
       showToast("Médicament mis à jour avec succès !", "success");
-      setIsEditModalOpen(false);
+      fermerEdition();
       chargerProduits();
     } catch (error) {
       console.error("Erreur mise à jour offre :", error);
@@ -359,7 +366,7 @@ export default function Centrale({ pharmacieId, token }) {
           {/* Backdrop */}
           <div 
             className="absolute inset-0 bg-emerald-950/40 backdrop-blur-sm"
-            onClick={() => setIsEditModalOpen(false)}
+            onClick={fermerEdition}
           ></div>
 
           {/* Modal Container */}
@@ -367,7 +374,7 @@ export default function Centrale({ pharmacieId, token }) {
             <div className="flex items-center justify-between border-b border-gray-100 pb-4 mb-4">
               <h3 className="font-bold text-gray-800 text-lg">Modifier le médicament</h3>
               <button 
-                onClick={() => setIsEditModalOpen(false)}
+                onClick={fermerEdition}
                 className="p-1.5 hover:bg-gray-100 rounded-lg transition text-gray-400 hover:text-gray-600 cursor-pointer"
               >
                 <XMarkIcon className="w-5 h-5" />
@@ -469,7 +476,7 @@ export default function Centrale({ pharmacieId, token }) {
               <div className="border-t border-gray-100 pt-4 mt-6 flex justify-end gap-3">
                 <button
                   type="button"
-                  onClick={() => setIsEditModalOpen(false)}
+                  onClick={fermerEdition}
                   className="px-5 py-2 border border-gray-200 rounded-xl text-xs font-semibold text-gray-500 hover:bg-gray-50 transition cursor-pointer"
                 >
                   Annuler

@@ -15,7 +15,33 @@ import {
   InformationCircleIcon
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
+import {
+  assurerMedicament,
+  chargerMedicamentsParNoms,
+  chargerOffresGlobales,
+  chargerOffresPharmacie,
+  normaliserNom,
+} from "@/app/lib/medicaments";
 import { useToast } from "@/app/components/Toast";
+
+// Retire du stockage la photo d'une ligne qui n'a pas pu être enregistrée.
+async function supprimerImageImportee(chemin) {
+  if (!chemin || !chemin.startsWith("produits/")) return;
+  const { error } = await supabase.storage.from("offres-images").remove([chemin]);
+  if (error) console.error("Image orpheline non supprimée :", chemin, error);
+}
+
+function formaterPrix(valeur) {
+  return typeof valeur === "number" && Number.isFinite(valeur)
+    ? `${valeur.toLocaleString("fr-FR")} FCFA`
+    : "";
+}
+
+// Prix demandé pour la ligne : le prix déjà saisi, sinon la valeur
+// détectée par l'IA.
+function prixAffiche(item) {
+  return item.prix ? parseInt(item.prix, 10) : null;
+}
 
 export default function ImportationStock({ pharmacieId, onImportSuccess }) {
   const [dragActive, setDragActive] = useState(false);
@@ -83,54 +109,88 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
       const resData = await response.json();
 
       if (resData && resData.succes && Array.isArray(resData.produits)) {
-        // Enrichir chaque produit avec les données de Supabase
-        const produitsFormates = [];
-        for (let idx = 0; idx < resData.produits.length; idx++) {
-          const p = resData.produits[idx];
+        // Déduplication : le même nom normalisé ne peut être importé
+        // qu'une seule fois dans le lot.
+        const vus = new Map();
+        const doublonsIgnores = [];
+        for (const p of resData.produits) {
           const nomClean = p.nom ? p.nom.trim() : "";
           if (!nomClean) continue;
-
-          let idMedicament = "new";
-          let photoExistante = null;
-          let prixExistant = p.prix || "";
-
-          // Vérifier si le médicament existe déjà en base
-          const { data: medExistant } = await supabase
-            .from("medicaments")
-            .select("*")
-            .ilike("nom", nomClean)
-            .maybeSingle();
-
-          if (medExistant) {
-            idMedicament = medExistant.id;
-
-            // Chercher une image d'offre existante pour ce médicament
-            const { data: offreAvecImage } = await supabase
-              .from("offres")
-              .select("image")
-              .eq("id_medicament", medExistant.id)
-              .not("image", "is", null)
-              .limit(1)
-              .maybeSingle();
-
-            if (offreAvecImage && offreAvecImage.image) {
-              photoExistante = offreAvecImage.image;
-            }
+          const cle = normaliserNom(nomClean);
+          if (vus.has(cle)) {
+            doublonsIgnores.push(nomClean);
+            continue;
           }
+          vus.set(cle, { nomClean, prix: p.prix || "" });
+        }
 
-          produitsFormates.push({
+        if (doublonsIgnores.length > 0) {
+          showToast(
+            `${doublonsIgnores.length} ligne(s) en doublon ignorée(s) : ${doublonsIgnores.join(", ")}.`,
+            "info"
+          );
+        }
+
+        if (vus.size === 0) {
+          showToast("Aucun produit exploitable détecté.", "error");
+          setFile(null);
+          return;
+        }
+
+        // Enrichir chaque produit à partir de Supabase : quelques requêtes
+        // groupées par lots de 50, parcourues page par page.
+        const cles = [...vus.keys()];
+        const lignesMedicaments = await chargerMedicamentsParNoms(
+          cles.map((cle) => vus.get(cle).nomClean)
+        );
+        const medicamentsParCle = new Map();
+        for (const med of lignesMedicaments) {
+          const cle = normaliserNom(med.nom);
+          if (!medicamentsParCle.has(cle)) medicamentsParCle.set(cle, med);
+        }
+
+        const medicamentsParIndex = cles.map((cle) => medicamentsParCle.get(cle) ?? null);
+        const idsMedicaments = medicamentsParIndex.filter(Boolean).map((med) => med.id);
+        const offresPharmacie = await chargerOffresPharmacie(pharmacieId, idsMedicaments);
+
+        const prixParMedicament = new Map();
+        for (const offre of offresPharmacie) {
+          if (!prixParMedicament.has(offre.id_medicament)) {
+            prixParMedicament.set(offre.id_medicament, offre.prix);
+          }
+        }
+
+        const photosParMedicament = new Map();
+        for (const offre of offresPharmacie) {
+          if (!photosParMedicament.has(offre.id_medicament) && offre.image) {
+            photosParMedicament.set(offre.id_medicament, offre.image);
+          }
+        }
+        for (const offre of await chargerOffresGlobales(idsMedicaments)) {
+          if (!photosParMedicament.has(offre.id_medicament) && offre.image) {
+            photosParMedicament.set(offre.id_medicament, offre.image);
+          }
+        }
+
+        const produitsFormates = cles.map((cle, idx) => {
+          const med = medicamentsParIndex[idx];
+          const item = vus.get(cle);
+          return {
             localId: `local_${idx}_${Date.now()}`,
-            nom: nomClean,
-            prix: prixExistant,
+            nom: item.nomClean,
+            prix: item.prix,
             disponibilite: "disponible",
-            idMedicament,
-            photoExistante,
+            idMedicament: med ? med.id : "new",
+            photoExistante: med ? photosParMedicament.get(med.id) || null : null,
+            existeDeja: Boolean(med),
+            offertParPharmacie: med ? prixParMedicament.has(med.id) : false,
+            prixOffrePharmacie: med ? prixParMedicament.get(med.id) ?? null : null,
             selected: true,
             newImageFile: null,
             newImagePreview: ""
-          });
-        }
-        
+          };
+        });
+
         setProduits(produitsFormates);
         showToast(`${produitsFormates.length} produits détectés par l'IA !`, "success");
       } else {
@@ -208,38 +268,30 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
       }
     }
 
+    if (importing) return;
+
     setImporting(true);
     setImportProgress(0);
-    let successCount = 0;
+    let createdCount = 0;
+    let updatedCount = 0;
+    const nomsEnErreur = [];
 
     for (let i = 0; i < selection.length; i++) {
       const item = selection[i];
       setImportMessage(`Importation de ${item.nom} (${i + 1}/${selection.length})...`);
-      
+      let imageImportee = null;
+
       try {
+        if (!pharmacieId) {
+          throw new Error("Identifiant de pharmacie manquant.");
+        }
+
+        // 1. Rattacher la ligne au catalogue existant quand le nom normalisé
+        // correspond déjà à un médicament.
         let finalIdMedicament = item.idMedicament;
-
-        // 1. Obtenir ou créer l'ID de médicament dans 'medicaments'
         if (!finalIdMedicament || finalIdMedicament === "new") {
-          const nomClean = item.nom.trim();
-          const { data: existant } = await supabase
-            .from("medicaments")
-            .select("*")
-            .ilike("nom", nomClean)
-            .maybeSingle();
-
-          if (existant) {
-            finalIdMedicament = existant.id;
-          } else {
-            const { data: nouveauMed, error: insErr } = await supabase
-              .from("medicaments")
-              .insert({ nom: nomClean })
-              .select()
-              .single();
-
-            if (insErr) throw insErr;
-            finalIdMedicament = nouveauMed.id;
-          }
+          const med = await assurerMedicament(item.nom);
+          finalIdMedicament = med.id;
         }
 
         // 2. Traitement de la photo
@@ -255,53 +307,78 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
             const { data: urlData } = supabase.storage
               .from("offres-images")
               .getPublicUrl(filename);
-            imageUrl = urlData?.publicUrl || imageUrl;
+            if (urlData?.publicUrl) {
+              imageUrl = urlData.publicUrl;
+              imageImportee = filename;
+            }
           }
         }
 
-        // 3. Upsert dans 'offres'
-        if (pharmacieId) {
-          const { data: offreExistante } = await supabase
+        // 3. Une offre existante est mise à jour (jamais supprimée puis
+        // recréée) ; on n'insère que si aucune ligne ne correspond.
+        const { data: offresLiees, error: lookupErr } = await supabase
+          .from("offres")
+          .select("id")
+          .eq("id_pharmacie", pharmacieId)
+          .eq("id_medicament", finalIdMedicament)
+          .limit(2);
+
+        if (lookupErr) throw lookupErr;
+
+        const offreExistante = (offresLiees || [])[0] || null;
+
+        if (offreExistante) {
+          const { error: upErr } = await supabase
             .from("offres")
-            .select("*")
-            .eq("id_pharmacie", pharmacieId)
-            .eq("id_medicament", finalIdMedicament)
-            .maybeSingle();
+            .update({
+              prix: parseInt(item.prix, 10),
+              image: imageUrl,
+              disponibilite: item.disponibilite || "disponible"
+            })
+            .eq("id", offreExistante.id);
 
-          if (offreExistante) {
-            await supabase
-              .from("offres")
-              .update({
-                prix: parseInt(item.prix, 10),
-                image: imageUrl,
-                disponibilite: item.disponibilite || "disponible"
-              })
-              .eq("id", offreExistante.id);
-          } else {
-            await supabase
-              .from("offres")
-              .insert({
-                id_pharmacie: pharmacieId,
-                id_medicament: finalIdMedicament,
-                prix: parseInt(item.prix, 10),
-                image: imageUrl,
-                disponibilite: item.disponibilite || "disponible"
-              });
-          }
+          if (upErr) throw upErr;
+          updatedCount++;
+        } else {
+          const { error: insErr } = await supabase
+            .from("offres")
+            .insert({
+              id_pharmacie: pharmacieId,
+              id_medicament: finalIdMedicament,
+              prix: parseInt(item.prix, 10),
+              image: imageUrl,
+              disponibilite: item.disponibilite || "disponible"
+            });
+
+          if (insErr) throw insErr;
+          createdCount++;
         }
-
-        successCount++;
       } catch (error) {
+        // Ligne non enregistrée : la photo téléversée pour cette ligne est
+        // retirée du stockage.
+        if (imageImportee) await supprimerImageImportee(imageImportee);
         console.error(`Échec importation de ${item.nom} :`, error);
-        showToast(`Erreur d'importation pour ${item.nom}`, "error");
+        nomsEnErreur.push(item.nom);
       }
 
       setImportProgress(Math.round(((i + 1) / selection.length) * 100));
     }
 
     setImporting(false);
-    showToast(`${successCount} médicament(s) importé(s) avec succès !`, "success");
-    
+
+    const resume = [];
+    if (createdCount > 0) resume.push(`${createdCount} créé(s)`);
+    if (updatedCount > 0) resume.push(`${updatedCount} mis à jour`);
+    if (nomsEnErreur.length > 0) {
+      resume.push(`${nomsEnErreur.length} en erreur (${nomsEnErreur.join(", ")})`);
+    }
+
+    if (resume.length > 0) {
+      showToast(`Import terminé : ${resume.join(", ")}.`, nomsEnErreur.length > 0 ? "error" : "success");
+    } else {
+      showToast("Aucun médicament importé.", "error");
+    }
+
     if (onImportSuccess) {
       onImportSuccess();
     }
@@ -408,7 +485,8 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
               <button
                 type="button"
                 onClick={lancerImportation}
-                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/15 active:scale-95 transition flex items-center gap-1.5 cursor-pointer"
+                disabled={importing}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/15 active:scale-95 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <CheckIcon className="w-4 h-4" />
                 Valider et importer le stock ({produits.filter(p => p.selected).length})
@@ -459,11 +537,20 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
                           className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm text-gray-800 font-bold focus:border-emerald-500 outline-none focus:ring-2 focus:ring-emerald-500/10 disabled:bg-gray-100 disabled:text-gray-400"
                           placeholder="Nom du médicament"
                         />
-                        {item.existeDeja ? (
+                        {item.offertParPharmacie ? (
+                          <span className="text-[10px] text-amber-700 font-semibold flex flex-wrap items-center gap-1 pl-1">
+                            <CheckIcon className="w-3 h-3 text-amber-600" />
+                            Déjà dans votre catalogue (prix mis à jour)
+                            {item.prixOffrePharmacie !== null && (
+                              <span className="font-mono">
+                                {`: ${formaterPrix(item.prixOffrePharmacie)} → ${formaterPrix(prixAffiche(item))}`}
+                              </span>
+                            )}
+                          </span>
+                        ) : item.existeDeja ? (
                           <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1 pl-1">
                             <CheckIcon className="w-3 h-3 text-emerald-500" />
                             Répertorié en base de données
-                            {item.offertParPharmacie && <span className="text-amber-600">(Déjà dans votre stock - sera mis à jour)</span>}
                           </span>
                         ) : (
                           <span className="text-[10px] text-blue-600 font-semibold pl-1">
@@ -561,7 +648,7 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
           <div className="bg-emerald-50/30 border border-emerald-100 rounded-2xl p-4 flex items-start space-x-3">
             <InformationCircleIcon className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
             <p className="text-xs text-gray-600 leading-normal">
-              <strong>Info :</strong> Si un médicament possède l'indicateur <span className="text-emerald-600 font-bold">Répertorié en base de données</span>, cela signifie que sa photo a déjà été trouvée en base et lui a été attribuée. Vous pouvez la conserver sans avoir à en téléverser une nouvelle.
+              <strong>Info :</strong> Une ligne marquée <span className="text-amber-700 font-bold">Déjà dans votre catalogue</span> possède déjà une offre pour cette pharmacie : son prix sera mis à jour, aucun doublon ne sera créé. Une ligne marquée <span className="text-emerald-600 font-bold">Répertorié en base de données</span> existe dans le catalogue commun et sa photo a été reprise.
             </p>
           </div>
         </div>
