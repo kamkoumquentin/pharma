@@ -84,6 +84,7 @@ export default function Modification({ info, token, onUpdate }) {
       if (coordonnees.lat !== null) modifications.latitude = parseFloat(coordonnees.lat);
       if (coordonnees.lng !== null) modifications.longitude = parseFloat(coordonnees.lng);
 
+      let erreurLogo = null;
       if (photo) {
         try {
           const ext = photo.name.split('.').pop();
@@ -92,14 +93,24 @@ export default function Modification({ info, token, onUpdate }) {
             .from("pharmacie-photos")
             .upload(filename, photo, { upsert: true });
 
-          if (!upErr) {
+          if (upErr) {
+            console.warn("Envoi du nouveau logo refusé par le stockage :", upErr);
+            erreurLogo = upErr.message || "le stockage a refusé l’envoi";
+          } else {
             const { data: urlData } = supabase.storage
               .from("pharmacie-photos")
               .getPublicUrl(filename);
-            modifications.photo = urlData?.publicUrl || photoPreview;
+            const url = urlData?.publicUrl || null;
+            if (!url) {
+              erreurLogo = "URL publique du logo indisponible";
+              console.warn("Aucune URL publique pour", filename);
+            } else {
+              modifications.photo = url;
+            }
           }
         } catch (storageErr) {
           console.error("Erreur upload photo pharmacie:", storageErr);
+          erreurLogo = storageErr?.message || "erreur inattendue pendant l’envoi";
         }
       }
 
@@ -110,11 +121,30 @@ export default function Modification({ info, token, onUpdate }) {
         .select()
         .single();
 
-      if (updateErr) throw updateErr;
+      // Aucun fichier n’est supprimé ici : un logo déjà en place peut être
+      // partagé, et le nouveau peut être repris par une autre ligne.
+      if (updateErr) {
+        console.error("Échec de la mise à jour du profil pharmacie :", updateErr);
+        showToast(
+          erreurLogo
+            ? `Le logo n’a pas pu être envoyé (${erreurLogo}) et aucune modification n’a été enregistrée.`
+            : "Échec de l’enregistrement des modifications.",
+          "error"
+        );
+        return;
+      }
 
-      showToast("Modifications enregistrées avec succès !", "success");
       if (onUpdate && updatedData) {
         onUpdate(updatedData);
+      }
+
+      if (erreurLogo) {
+        showToast(
+          `Le logo n’a pas pu être envoyé (${erreurLogo}) : les autres modifications sont enregistrées.`,
+          "error"
+        );
+      } else {
+        showToast("Modifications enregistrées avec succès !", "success");
       }
     } catch (error) {
       console.error("Erreur lors de la sauvegarde :", error);

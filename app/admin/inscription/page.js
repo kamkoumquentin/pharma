@@ -50,6 +50,13 @@ export default function Inscription() {
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [pendingEmail, setPendingEmail] = useState("");
 
+  // Envoi du logo manqué : le compte est déjà créé, l'utilisateur choisit de
+  // réessayer l'envoi ou de continuer sans logo.
+  const [echecLogo, setEchecLogo] = useState(null);
+  // Identifiant du compte créé par « signUp », conservé pour reprendre la
+  // création du profil sans réinscrire la pharmacie.
+  const [compteCree, setCompteCree] = useState(null);
+
   const handleOtpSuccess = (session) => {
     setShowOtpModal(false);
     if (session?.access_token) {
@@ -60,8 +67,128 @@ export default function Inscription() {
     nav.push("/admin");
   };
 
+  // Téléverse le logo dans « pharmacie-photos » sous le préfixe logos/.
+  // Renvoie { url } ou { erreur } : c'est l'appelant qui décide de la suite.
+  const televerserLogo = async () => {
+    const ext = tab.photo.name.split('.').pop();
+    const filename = `logos/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
+
+    try {
+      const { error: uploadError } = await supabase.storage
+        .from("pharmacie-photos")
+        .upload(filename, tab.photo, { upsert: true });
+
+      if (uploadError) {
+        console.warn("Envoi du logo refusé par le stockage :", uploadError);
+        return { erreur: uploadError.message || "le stockage a refusé l'envoi" };
+      }
+
+      const { data: urlData } = supabase.storage
+        .from("pharmacie-photos")
+        .getPublicUrl(filename);
+      const url = urlData?.publicUrl || null;
+      if (!url) return { erreur: "URL publique du logo indisponible" };
+
+      return { url };
+    } catch (storageErr) {
+      console.error("Erreur upload photo:", storageErr);
+      return { erreur: storageErr?.message || "erreur inattendue pendant l'envoi" };
+    }
+  };
+
+  // Insère la ligne « pharmacies », puis ouvre la session ou demande la
+  // validation par code OTP. Si l'insertion échoue après un envoi réussi, le
+  // logo n'est pas supprimé : le rôle anonyme n'a pas le droit de supprimer
+  // un objet du stockage, le fichier restant est seulement journalisé.
+  const enregistrerProfil = async ({ photoUrl, compte }) => {
+    const { error: dbError } = await supabase
+      .from("pharmacies")
+      .insert({
+        nom: tab.nom.trim(),
+        ville: tab.ville.trim(),
+        longitude: parseFloat(tab.longitude),
+        latitude: parseFloat(tab.latitude),
+        photo: photoUrl,
+        password: compte.id,
+        emplacement: tab.emplacement ? tab.emplacement.trim() : null,
+        statut: "actif",
+        etat: "normal",
+      })
+      .single();
+
+    if (dbError) {
+      console.log("[DIAG] Erreur insert pharmacies :", {
+        code: dbError.code,
+        message: dbError.message,
+      });
+      console.error("Erreur insertion table pharmacies:", dbError);
+      if (photoUrl) {
+        console.warn("Logo téléversé sans profil créé, fichier laissé en place :", photoUrl);
+      }
+
+      if (dbError.code === "23505") {
+        const detail = (dbError.message || "").toLowerCase();
+        if (detail.includes("nom")) {
+          showToast(`Le nom de pharmacie "${tab.nom}" est déjà utilisé. Veuillez en choisir un autre.`, "error");
+        } else {
+          showToast("Cette pharmacie ou cette information est déjà enregistrée sur la plateforme.", "error");
+        }
+      } else if (dbError.code === "42501") {
+        showToast("Accès refusé par la politique de sécurité de la base de données.", "error");
+      } else {
+        showToast(dbError.message || "Erreur lors de l'enregistrement du profil pharmacie.", "error");
+      }
+      return;
+    }
+
+    console.log("[DIAG] Insert pharmacies terminé avec succès avant navigation");
+    setEchecLogo(null);
+
+    if (compte.session) {
+      localStorage.setItem("token_pharmacie", compte.session.access_token);
+      localStorage.setItem("role_pharmacie", "pharmacie");
+      showToast("Pharmacie créée et connectée avec succès !", "success");
+      nav.push("/admin");
+    } else {
+      // L'email avec le code OTP a été envoyé
+      setPendingEmail(tab.email.trim().toLowerCase());
+      setShowOtpModal(true);
+    }
+  };
+
+  // Choix proposé après un envoi de logo manqué : le compte étant déjà créé,
+  // on reprend ici sans repasser par « signUp ».
+  const reessayerEnvoiLogo = async () => {
+    if (loading || !compteCree || !tab.photo) return;
+    setLoading(true);
+    try {
+      const envoi = await televerserLogo();
+      if (envoi.erreur) {
+        showToast("Le logo n'a pas pu être envoyé.", "error");
+        setEchecLogo({ message: envoi.erreur });
+        return;
+      }
+      await enregistrerProfil({ photoUrl: envoi.url, compte: compteCree });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const continuerSansLogo = async () => {
+    if (loading || !compteCree) return;
+    setLoading(true);
+    try {
+      await enregistrerProfil({ photoUrl: null, compte: compteCree });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const inscription = async (e) => {
     e.preventDefault();
+
+    // Une nouvelle tentative repart d'un panneau d'échec vierge.
+    setEchecLogo(null);
 
     if (
       tab.nom.trim().length > 0 &&
@@ -103,78 +230,22 @@ export default function Inscription() {
 
         console.log("[DIAG] signUp session existante :", !!authData.session);
 
-        // 2. Upload de photo sur Supabase Storage si fournie
-        let photoUrl = null;
+        // 2. Envoi du logo, puis création du profil. Un envoi qui échoue
+        // n'est pas ignoré en silence : l'utilisateur choisit de réessayer
+        // ou de continuer sans logo.
+        const compte = { id: authData.user.id, session: authData.session };
+        setCompteCree(compte);
+
         if (tab.photo) {
-          try {
-            const ext = tab.photo.name.split('.').pop();
-            const filename = `logos/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
-            const { error: uploadError } = await supabase.storage
-              .from("pharmacie-photos")
-              .upload(filename, tab.photo, { upsert: true });
-
-            if (uploadError) {
-              console.warn("Erreur storage upload (falling back):", uploadError);
-            } else {
-              const { data: urlData } = supabase.storage
-                .from("pharmacie-photos")
-                .getPublicUrl(filename);
-              photoUrl = urlData?.publicUrl || null;
-            }
-          } catch (storageErr) {
-            console.error("Erreur upload photo:", storageErr);
+          const envoi = await televerserLogo();
+          if (envoi.erreur) {
+            showToast("Le logo n'a pas pu être envoyé.", "error");
+            setEchecLogo({ message: envoi.erreur });
+            return;
           }
-        }
-
-        // 3. Insertion du profil pharmacie dans la table public.pharmacies
-        const { data: profilData, error: dbError } = await supabase
-          .from("pharmacies")
-          .insert({
-            nom: tab.nom.trim(),
-            ville: tab.ville.trim(),
-            longitude: parseFloat(tab.longitude),
-            latitude: parseFloat(tab.latitude),
-            photo: photoUrl,
-            password: authData.user.id,
-            emplacement: tab.emplacement ? tab.emplacement.trim() : null,
-            statut: "actif",
-            etat: "normal",
-          })
-          .select()
-          .single();
-
-        if (dbError) {
-          console.log("[DIAG] Erreur insert pharmacies :", {
-            code: dbError.code,
-            message: dbError.message,
-          });
-          console.error("Erreur insertion table pharmacies:", dbError);
-          if (dbError.code === "23505") {
-            const detail = (dbError.message || "").toLowerCase();
-            if (detail.includes("nom")) {
-              showToast(`Le nom de pharmacie "${tab.nom}" est déjà utilisé. Veuillez en choisir un autre.`, "error");
-            } else {
-              showToast("Cette pharmacie ou cette information est déjà enregistrée sur la plateforme.", "error");
-            }
-          } else if (dbError.code === "42501") {
-            showToast("Accès refusé par la politique de sécurité de la base de données.", "error");
-          } else {
-            showToast(dbError.message || "Erreur lors de l'enregistrement du profil pharmacie.", "error");
-          }
-          return;
-        }
-
-        console.log("[DIAG] Insert pharmacies terminé avec succès avant navigation");
-
-        if (authData.session) {
-          localStorage.setItem("token_pharmacie", authData.session.access_token);
-          localStorage.setItem("role_pharmacie", "pharmacie");
-          showToast("Pharmacie créée et connectée avec succès !", "success");
-          nav.push("/admin");
+          await enregistrerProfil({ photoUrl: envoi.url, compte });
         } else {
-          // L'email avec le code OTP a été envoyé
-          setPendingEmail(emailClean);
-          setShowOtpModal(true);
+          await enregistrerProfil({ photoUrl: null, compte });
         }
       } catch (error) {
         console.error("Erreur inscription:", error);
@@ -245,6 +316,36 @@ export default function Inscription() {
 
         {/* Form */}
         <form onSubmit={inscription} className="w-full flex flex-col space-y-4">
+          {echecLogo && (
+            <div
+              role="alert"
+              className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+            >
+              <p className="font-semibold">Le logo n’a pas pu être envoyé.</p>
+              <p className="mt-1 text-amber-800">
+                Le compte a été créé, mais le profil de la pharmacie n’est pas
+                encore enregistré. ({echecLogo.message})
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={reessayerEnvoiLogo}
+                  disabled={loading}
+                  className="h-9 px-3 rounded-lg bg-amber-600 text-white font-semibold text-xs hover:bg-amber-700 transition disabled:opacity-50 cursor-pointer"
+                >
+                  Réessayer l’envoi du logo
+                </button>
+                <button
+                  type="button"
+                  onClick={continuerSansLogo}
+                  disabled={loading}
+                  className="h-9 px-3 rounded-lg border border-amber-300 bg-white text-amber-800 font-semibold text-xs hover:bg-amber-100 transition disabled:opacity-50 cursor-pointer"
+                >
+                  Continuer sans logo
+                </button>
+              </div>
+            </div>
+          )}
           
           {/* Nom Input */}
           <div className="flex flex-col space-y-1">
@@ -425,10 +526,14 @@ export default function Inscription() {
             </button>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || Boolean(echecLogo)}
               className="flex-1 h-11 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold rounded-xl shadow-lg active:scale-[0.98] transition disabled:opacity-50 cursor-pointer text-sm"
             >
-              {loading ? "Création..." : "Créer la pharmacie"}
+              {loading
+                ? "Création..."
+                : echecLogo
+                  ? "Choisissez une option ci-dessus"
+                  : "Créer la pharmacie"}
             </button>
           </div>
         </form>

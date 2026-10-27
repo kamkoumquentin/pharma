@@ -17,10 +17,17 @@ import { useToast } from "@/app/components/Toast";
 // Retire du stockage la photo d'une offre qui n'a pas pu être enregistrée.
 // Le chemin n'est passé qu'après un téléversement réussi : une URL reprise
 // d'une autre offre n'est jamais supprimée ici.
+// remove() peut répondre sans erreur et ne rapporter aucun fichier : une
+// politique de stockage ou un chemin inconnu laissent alors l'image en place,
+// ce que « data » est seul à révéler.
 async function supprimerImageTeleversee(chemin) {
   if (!chemin || !chemin.startsWith("produits/")) return;
-  const { error } = await supabase.storage.from("offres-images").remove([chemin]);
-  if (error) console.warn("Suppression de l'image téléversée impossible :", chemin, error);
+  const { data, error } = await supabase.storage.from("offres-images").remove([chemin]);
+  if (error) {
+    console.warn("Suppression de l'image téléversée impossible :", chemin, error);
+  } else if (!data || data.length === 0) {
+    console.warn("Aucun fichier supprimé (policy ou chemin) :", chemin);
+  }
 }
 
 export default function Ajouter({ pharmacieId, token, onAddSuccess, onModifierOffre }) {

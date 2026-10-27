@@ -27,10 +27,18 @@ import { useToast } from "@/app/components/Toast";
 // Retire du stockage la photo d'une ligne qui n'a pas pu être enregistrée.
 // Le chemin n'est passé qu'après un téléversement réussi : une photo
 // reprise d'une autre offre (même pharmacie ou autre) n'est jamais supprimée.
+// remove() peut répondre sans erreur et ne rapporter aucun fichier : une
+// politique de stockage ou un chemin inconnu laissent alors l'image en place,
+// ce que « data » est seul à révéler.
 async function supprimerImageImportee(chemin) {
   if (!chemin || !chemin.startsWith("produits/")) return;
-  const { error } = await supabase.storage.from("offres-images").remove([chemin]);
-  if (error) console.warn("Suppression de l'image téléversée impossible :", chemin, error);
+  const demandes = [chemin];
+  const { data, error } = await supabase.storage.from("offres-images").remove(demandes);
+  if (error) {
+    console.warn("Suppression de l'image téléversée impossible :", chemin, error);
+  } else if (!data || data.length < demandes.length) {
+    console.warn(`Aucun fichier supprimé (policy ou chemin) : ${chemin} (${data ? data.length : 0} rapporté)`);
+  }
 }
 
 function formaterPrix(valeur) {
@@ -282,6 +290,7 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
       const item = selection[i];
       setImportMessage(`Importation de ${item.nom} (${i + 1}/${selection.length})...`);
       let imageImportee = null;
+      let modificationTentee = false;
 
       try {
         if (!pharmacieId) {
@@ -330,6 +339,7 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
         const offreExistante = (offresLiees || [])[0] || null;
 
         if (offreExistante) {
+          modificationTentee = true;
           const { error: upErr } = await supabase
             .from("offres")
             .update({
@@ -356,9 +366,18 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
           createdCount++;
         }
       } catch (error) {
-        // Ligne non enregistrée : la photo téléversée pour cette ligne est
-        // retirée du stockage.
-        if (imageImportee) await supprimerImageImportee(imageImportee);
+        // Ligne non enregistrée. Sur une création, la photo téléversée pour
+        // cette ligne et jamais référencée est retirée du stockage. Sur une
+        // mise à jour, aucun fichier n'est supprimé : une photo peut être
+        // partagée entre plusieurs offres, le fichier de trop reste en place
+        // et se voit journaliser.
+        if (imageImportee) {
+          if (modificationTentee) {
+            console.warn("Mise à jour échouée, fichier laissé en place :", imageImportee);
+          } else {
+            await supprimerImageImportee(imageImportee);
+          }
+        }
         console.error(`Échec importation de ${item.nom} :`, error);
         nomsEnErreur.push(item.nom);
       }
