@@ -87,7 +87,7 @@ function motifParNom(nom) {
 // guillemets et les pipes sûrs.
 // Le motif remplace les espaces par des jokers : « doliprane%500mg »
 // correspond donc aussi à « Doliprane Forte 500mg ». Toutes les lignes
-// candidates sont ramnées (par pages, sans limite basse) et la ligne retenue
+// candidates sont ramenées (par pages, sans limite basse) et la ligne retenue
 // est celle dont le nom normalisé est strictement égal au nom recherché ;
 // couper la requête à une seule ligne risquerait de renvoyer la mauvaise.
 export async function chargerMedicamentsParNoms(noms) {
