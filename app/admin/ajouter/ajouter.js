@@ -15,10 +15,12 @@ import { assurerMedicament } from "@/app/lib/medicaments";
 import { useToast } from "@/app/components/Toast";
 
 // Retire du stockage la photo d'une offre qui n'a pas pu être enregistrée.
+// Le chemin n'est passé qu'après un téléversement réussi : une URL reprise
+// d'une autre offre n'est jamais supprimée ici.
 async function supprimerImageTeleversee(chemin) {
   if (!chemin || !chemin.startsWith("produits/")) return;
   const { error } = await supabase.storage.from("offres-images").remove([chemin]);
-  if (error) console.error("Image orpheline non supprimée :", chemin, error);
+  if (error) console.warn("Suppression de l'image téléversée impossible :", chemin, error);
 }
 
 export default function Ajouter({ pharmacieId, token, onAddSuccess, onModifierOffre }) {

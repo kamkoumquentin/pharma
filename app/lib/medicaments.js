@@ -55,15 +55,26 @@ async function collecterParPages(construireRequete) {
   return toutes;
 }
 
-// Ramène les lignes « medicaments » dont le nom figure exactement dans la
-// liste, par lots de TAILLE_LOT noms.
+// Construit un motif « or » insensible à la casse pour une liste de noms.
+// Les antislashes, % et _ sont échappés, le | reste le séparateur d'OR.
+function motifNomsExactes(noms) {
+  return noms.map((nom) => echapperMotif(String(nom)).replace(/\|/g, "\\|")).join("|");
+}
+
+// Ramène les lignes « medicaments » dont le nom correspond (en taille
+// ignorée) à un nom de la liste, par lots de TAILLE_LOT noms. La
+// comparaison définitive, elle, se fait en JavaScript sur le nom normalisé.
 export async function chargerMedicamentsParNoms(noms) {
   const lots = decouper([...new Set(noms.filter(Boolean))], TAILLE_LOT);
   const tous = [];
 
   for (const lot of lots) {
     const lignes = await collecterParPages(
-      () => supabase.from("medicaments").select("id, nom").in("nom", lot)
+      () =>
+        supabase
+          .from("medicaments")
+          .select("id, nom")
+          .ilike("nom", motifNomsExactes(lot))
     );
     tous.push(...lignes);
   }
@@ -72,8 +83,8 @@ export async function chargerMedicamentsParNoms(noms) {
 }
 
 // Retourne la ligne de « medicaments » dont le nom normalisé correspond,
-// ou null si aucune. La comparaison se fait en JavaScript : la base peut
-// stocker des noms dont les espaces ne sont pas normalisés.
+// ou null si aucune. Le filtre reste insensible à la casse : la base peut
+// stocker des noms dont la casse ou les espaces ne sont pas normalisés.
 export async function trouverMedicamentParNom(nom) {
   const nomNormalise = normaliserNom(nom);
   if (!nomNormalise) return null;
@@ -82,7 +93,7 @@ export async function trouverMedicamentParNom(nom) {
   if (!mot) return null;
 
   const candidats = await collecterParPages(
-    () => supabase.from("medicaments").select("id, nom").like("nom", `%${mot}%`)
+    () => supabase.from("medicaments").select("id, nom").ilike("nom", `%${mot}%`)
   );
 
   return candidats.find((med) => normaliserNom(med.nom) === nomNormalise) ?? null;
@@ -112,7 +123,7 @@ export async function assurerMedicament(nom) {
 
       const motif = echapperMotif(normaliserNom(nom)).replace(/ /g, "%");
       const candidates = await collecterParPages(
-        () => supabase.from("medicaments").select("id, nom").like("nom", `%${motif}%`)
+        () => supabase.from("medicaments").select("id, nom").ilike("nom", `%${motif}%`)
       );
 
       const rejoue = candidates.find((med) => normaliserNom(med.nom) === normaliserNom(nom));

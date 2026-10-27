@@ -25,10 +25,12 @@ import {
 import { useToast } from "@/app/components/Toast";
 
 // Retire du stockage la photo d'une ligne qui n'a pas pu être enregistrée.
+// Le chemin n'est passé qu'après un téléversement réussi : une photo
+// reprise d'une autre offre (même pharmacie ou autre) n'est jamais supprimée.
 async function supprimerImageImportee(chemin) {
   if (!chemin || !chemin.startsWith("produits/")) return;
   const { error } = await supabase.storage.from("offres-images").remove([chemin]);
-  if (error) console.error("Image orpheline non supprimée :", chemin, error);
+  if (error) console.warn("Suppression de l'image téléversée impossible :", chemin, error);
 }
 
 function formaterPrix(valeur) {
