@@ -7,8 +7,23 @@ export const TAILLE_LOT = 50;
 const LIGNES_PAR_PAGE = 1000;
 const GARDE_FOLIE = 2000;
 
+let client = supabase;
+
+// Permet au script de test d'injecter son propre client sans résoudre
+// l'alias « @/* » du projet.
+export function definirClient(nouveauClient) {
+  client = nouveauClient;
+}
+
 // Ramène un nom à une forme comparable : minuscules, accents conservés,
 // espaces multiples réduits à un seul et bords retirés.
+// Ecarts assumés avec lower() de PostgreSQL : lower() conserve les espaces
+// multiples et ne retire rien d'autre, alors qu'ici ils sont réduits à un
+// seul. Les lettres accentuées se comportent pareil (É -> é, È -> è) ; les
+// seules divergences connues de lower() sont la sigma finale grecque et
+// l'İ turc, hors du vocabulaire des noms de médicaments. Aucun accent n'est
+// supprimé : « Éfferalgan » et « Efferalgan » restent deux médicaments
+// distincts, comme les distinguerait la base.
 export function normaliserNom(nom) {
   return String(nom ?? "").toLowerCase().trim().replace(/\s+/g, " ");
 }
@@ -55,28 +70,39 @@ async function collecterParPages(construireRequete) {
   return toutes;
 }
 
-// Construit un motif « or » insensible à la casse pour une liste de noms.
-// Les antislashes, % et _ sont échappés, le | reste le séparateur d'OR.
-function motifNomsExactes(noms) {
-  return noms.map((nom) => echapperMotif(String(nom)).replace(/\|/g, "\\|")).join("|");
+// Nombre de requêtes menées de front dans chargerMedicamentsParNoms.
+const NOM_PAR_GROUPE = 10;
+
+// Motif « like » qui retrouve un nom quel que soit l'espacement stocké :
+// \ % _ sont échappés et les espaces deviennent des jokers.
+function motifParNom(nom) {
+  return echapperMotif(String(nom)).replace(/ /g, "%");
 }
 
-// Ramène les lignes « medicaments » dont le nom correspond (en taille
-// ignorée) à un nom de la liste, par lots de TAILLE_LOT noms. La
-// comparaison définitive, elle, se fait en JavaScript sur le nom normalisé.
+// Ramène les lignes « medicaments » dont le nom normalisé correspond à un
+// nom de la liste. Une requête ilike par nom, menée de front par groupes de
+// NOM_PAR_GROUPE : la valeur reste un paramètre d'URL, elle n'est jamais
+// exposée au découpage des filtres composés (« or », « ilike(any).{…} »), ce
+// qui rend la virgule, les parenthèses, les guillemets et les pipes sûrs.
 export async function chargerMedicamentsParNoms(noms) {
-  const lots = decouper([...new Set(noms.filter(Boolean))], TAILLE_LOT);
+  const nomsUniques = [...new Set(noms.filter(Boolean))];
   const tous = [];
 
-  for (const lot of lots) {
-    const lignes = await collecterParPages(
-      () =>
-        supabase
+  for (const groupe of decouper(nomsUniques, NOM_PAR_GROUPE)) {
+    const pages = await Promise.all(
+      groupe.map(async (nomUnique) => {
+        const { data, error } = await client
           .from("medicaments")
           .select("id, nom")
-          .ilike("nom", motifNomsExactes(lot))
+          .ilike("nom", motifParNom(nomUnique))
+          .limit(1);
+
+        if (error) throw error;
+        return data || [];
+      })
     );
-    tous.push(...lignes);
+
+    for (const lignes of pages) tous.push(...lignes);
   }
 
   return tous;
@@ -93,7 +119,7 @@ export async function trouverMedicamentParNom(nom) {
   if (!mot) return null;
 
   const candidats = await collecterParPages(
-    () => supabase.from("medicaments").select("id, nom").ilike("nom", `%${mot}%`)
+    () => client.from("medicaments").select("id, nom").ilike("nom", `%${mot}%`)
   );
 
   return candidats.find((med) => normaliserNom(med.nom) === nomNormalise) ?? null;
@@ -106,7 +132,7 @@ export async function assurerMedicament(nom) {
   if (existant) return existant;
 
   const nomClean = String(nom ?? "").trim();
-  const { data, error } = await supabase
+  const { data, error } = await client
     .from("medicaments")
     .insert({ nom: nomClean })
     .select("id, nom")
@@ -123,7 +149,7 @@ export async function assurerMedicament(nom) {
 
       const motif = echapperMotif(normaliserNom(nom)).replace(/ /g, "%");
       const candidates = await collecterParPages(
-        () => supabase.from("medicaments").select("id, nom").ilike("nom", `%${motif}%`)
+        () => client.from("medicaments").select("id, nom").ilike("nom", `%${motif}%`)
       );
 
       const rejoue = candidates.find((med) => normaliserNom(med.nom) === normaliserNom(nom));
@@ -155,7 +181,7 @@ async function chargerOffresParMedicaments(idsMedicaments, filtrePharmacie) {
 
   for (const lot of lots) {
     const lignes = await collecterParPages(() => {
-      const requete = supabase
+      const requete = client
         .from("offres")
         .select("id, id_medicament, prix, image")
         .in("id_medicament", lot);
