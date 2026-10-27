@@ -79,33 +79,38 @@ function motifParNom(nom) {
   return echapperMotif(String(nom)).replace(/ /g, "%");
 }
 
-// Ramène les lignes « medicaments » dont le nom normalisé correspond à un
-// nom de la liste. Une requête ilike par nom, menée de front par groupes de
-// NOM_PAR_GROUPE : la valeur reste un paramètre d'URL, elle n'est jamais
-// exposée au découpage des filtres composés (« or », « ilike(any).{…} »), ce
-// qui rend la virgule, les parenthèses, les guillemets et les pipes sûrs.
+// Ramène les lignes « medicaments » dont le nom normalisé correspond
+// exactement à un nom de la liste. Une requête ilike par nom, menée de front
+// par groupes de NOM_PAR_GROUPE : la valeur reste un paramètre d'URL, elle
+// n'est jamais exposée au découpage des filtres composés (« or »,
+// « ilike(any).{…} »), ce qui rend la virgule, les parenthèses, les
+// guillemets et les pipes sûrs.
+// Le motif remplace les espaces par des jokers : « doliprane%500mg »
+// correspond donc aussi à « Doliprane Forte 500mg ». Toutes les lignes
+// candidates sont ramnées (par pages, sans limite basse) et la ligne retenue
+// est celle dont le nom normalisé est strictement égal au nom recherché ;
+// couper la requête à une seule ligne risquerait de renvoyer la mauvaise.
 export async function chargerMedicamentsParNoms(noms) {
   const nomsUniques = [...new Set(noms.filter(Boolean))];
-  const tous = [];
+  const parId = new Map();
 
   for (const groupe of decouper(nomsUniques, NOM_PAR_GROUPE)) {
-    const pages = await Promise.all(
+    const candidates = await Promise.all(
       groupe.map(async (nomUnique) => {
-        const { data, error } = await client
-          .from("medicaments")
-          .select("id, nom")
-          .ilike("nom", motifParNom(nomUnique))
-          .limit(1);
-
-        if (error) throw error;
-        return data || [];
+        const cle = normaliserNom(nomUnique);
+        const lignes = await collecterParPages(
+          () => client.from("medicaments").select("id, nom").ilike("nom", motifParNom(cle))
+        );
+        return lignes.filter((med) => normaliserNom(med.nom) === cle);
       })
     );
 
-    for (const lignes of pages) tous.push(...lignes);
+    for (const lignes of candidates) {
+      for (const med of lignes) parId.set(med.id, med);
+    }
   }
 
-  return tous;
+  return [...parId.values()];
 }
 
 // Retourne la ligne de « medicaments » dont le nom normalisé correspond,

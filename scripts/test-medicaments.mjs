@@ -5,10 +5,12 @@
 // Mode complet : il insère des lignes préfixées « zz test », vérifie que la
 // recherche les retrouve (casse, espacement, signes de ponctuation, %, _,
 // accents), puis les supprime. Aucune donnée existante n'est modifiée.
-// La clé anonymes du navigateur n'a pas le droit d'écrire dans « medicaments »
+// La clé anonyme du navigateur n'a pas le droit d'écrire dans « medicaments »
 // (politique de ligne) : hors identifiants autorisés, le script bascule en
 // lecture seule sur des noms déjà présents au catalogue et ne vérifie plus
-// que la forme des requêtes et les comparaisons insensibles à la casse.
+// que la forme des requêtes et les comparaisons insensibles à la casse. Le
+// choix de la ligne exacte parmi des candidates ambiguës est vérifié sur un
+// catalogue simulé, sans écrire quoi que ce soit.
 //
 // Identifiants : NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY ;
 // pour le mode complet, fournir en plus SUPABASE_SERVICE_ROLE_KEY (ou toute
@@ -37,6 +39,7 @@ const CLE = CLE_ECRITURE || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || clientP
 // l'URL est lue au moment où la requête est réellement attendue.
 const urlsVues = [];
 const filtresVus = [];
+const limitesVus = [];
 const brut = createClient(URL_BASE, CLE);
 
 function noterFiltre(cible) {
@@ -44,7 +47,10 @@ function noterFiltre(cible) {
     const url = new URL(String(cible.url));
     urlsVues.push(url.search);
     const filtreNom = url.searchParams.get("nom");
-    if (filtreNom) filtresVus.push(filtreNom);
+    if (filtreNom) {
+      filtresVus.push(filtreNom);
+      limitesVus.push(url.searchParams.get("limit"));
+    }
   } catch {
     // aucune URL sur cet objet : rien à noter
   }
@@ -92,13 +98,16 @@ const verifier = (libelle, condition, detail = "") => {
 };
 
 const marque = `zz test ${Date.now().toString(36)}`;
-// Quatre noms difficiles : espaces, majuscules, virgule, parenthèses,
-// guillemets, apostrophe, % et _ (les deux derniers étant des jokers SQL).
+// Cinq noms difficiles : espaces, majuscules, virgule, parenthèses,
+// guillemets, apostrophe, barre verticale, % et _ (les deux derniers étant
+// des jokers SQL). Le dernier sert au cas ambigu : son motif joker,
+// « doliprane%500mg », recouvre aussi « Doliprane Forte 500mg ».
 const nomsInsere = [
   `${marque} Doliprane 500mg`,
   `${marque} NAC, sirop (200 ml) "fort" 5%_x d'hier`,
   `${marque} Éfferalgan È 150mg`,
   `${marque}Solution|pipe 100%`,
+  `${marque} Doliprane Forte 500mg`,
 ];
 
 console.log("Insertion des lignes de test");
@@ -139,9 +148,6 @@ const verifierRecherche = async (noms) => {
   }
 };
 
-// Vérifie la forme réelle des chaînes de requête envoyées à PostgREST : une
-// valeur « nom=ilike.<motif> » par nom, sans barre verticale, sans éclatement
-// du nom sur sa propre ponctuation, et avec % et _ échappés.
 // Reconstruit le nom à partir du motif « ilike » réellement envoyé : les
 // échappements (\%, \_, \\) sont retirés puis les jokers d'espacement % sont
 // rendus en espaces. Si le résultat est le nom d'origine, la valeur est
@@ -153,9 +159,13 @@ function nomSousJacente(filtre) {
     .replace(/\\([\\%_])/g, "$1");
 }
 
+// Vérifie la forme réelle des chaînes de requête envoyées à PostgREST : une
+// valeur « nom=ilike.<motif> » par nom, sans éclatement du nom sur sa propre
+// ponctuation, et sans limite qui tronquerait les lignes candidates.
 const verifierFormeDesRequetes = async (noms) => {
   urlsVues.length = 0;
   filtresVus.length = 0;
+  limitesVus.length = 0;
   const lignes = await chargerMedicamentsParNoms(noms);
 
   console.log("\nForme des requêtes réellement envoyées");
@@ -173,23 +183,111 @@ const verifierFormeDesRequetes = async (noms) => {
   );
 
   // Aller-retour nom -> motif -> nom pour chaque valeur envoyée : la virgule,
-  // les parenthèses, les guillemets, l'apostrophe, le pipe, % et _ et les
-  // majuscules accentuées doivent ressortir intacts.
+  // les parenthèses, les guillemets, l'apostrophe, le pipe, % et _ doivent
+  // ressortir intacts et les accents conservés (seule la casse diffère, le
+  // filtre ilike ne dépend pas de la casse).
   const rendus = filtresVus.map(nomSousJacente).sort();
-  const attendus = [...noms].sort();
+  const attendus = noms.map(normaliserNom).sort();
   verifier(
     "chaque nom arrive intact dans une seule valeur de filtre",
     JSON.stringify(rendus) === JSON.stringify(attendus),
     `reçus ${rendus.join(" || ")}`
   );
+  verifier(
+    "les accents ne sont ni retirés ni transformés dans le motif",
+    rendus.some((nom) => nom.includes("éfferalgan è")),
+    rendus.join(" || ")
+  );
+
+  verifier(
+    "aucune requête coupée à une seule ligne (le joker d'espacement est ambigu)",
+    limitesVus.every((limite) => limite === null || Number(limite) > 1),
+    limitesVus.join(", ")
+  );
 
   return lignes;
+};
+
+// Le jeu de lignes renvoyé par ILIKE ne peut pas être forcing en base, et la
+// clé anonyme n'a pas le droit d'écrire : ce catalogue simulé rejoue la
+// sémantique de LIKE (motif ancré, % et _ jokers, antislash d'échappement,
+// casse ignorée) pour vérifier le choix de la ligne, quel que soit l'accès.
+function jockerVersRegex(motif) {
+  const motifEchappe = motif
+    .split(/(\\.)/)
+    .map((fragment) => {
+      if (fragment.startsWith("\\")) return fragment.slice(1).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return fragment
+        .split(/([%_])/)
+        .map((partie) =>
+          partie === "%" ? ".*" : partie === "_" ? "." : partie.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        )
+        .join("");
+    })
+    .join("");
+  return new RegExp(`^${motifEchappe}$`, "i");
+}
+
+function creerClientSimule(lignes) {
+  const construire = (courantes) => ({
+    select: () => construire(courantes),
+    ilike: (colonne, motif) => {
+      const regex = jockerVersRegex(motif);
+      return construire(courantes.filter((ligne) => regex.test(String(ligne[colonne] ?? ""))));
+    },
+    range: (debut, fin) => Promise.resolve({ data: courantes.slice(debut, fin + 1), error: null }),
+    then: (succes) => Promise.resolve({ data: courantes, error: null }).then(succes),
+  });
+  return { from: () => construire(lignes) };
+}
+
+const verifierChoixLigneExacte = async () => {
+  console.log("\nChoix de la ligne exacte quand le motif joker est ambigu (catalogue simulé)");
+  const simulation = [
+    { id: 1, nom: `${marque} Doliprane 500mg` },
+    { id: 2, nom: `${marque} Doliprane Forte 500mg` },
+  ];
+  definirClient(creerClientSimule(simulation));
+  try {
+    // Le motif construit par la bibliothèque pour ce nom : minuscules,
+    // espaces devenus jokers.
+    const motifSimple = `${marque} doliprane 500mg`.replace(/ /g, "%");
+    verifier(
+      "le motif joker recouvre bien les deux lignes",
+      jockerVersRegex(motifSimple).test(`${marque} Doliprane Forte 500mg`),
+      motifSimple
+    );
+
+    const simple = await chargerMedicamentsParNoms([`${marque} Doliprane 500mg`]);
+    verifier(
+      "la recherche de « Doliprane 500mg » ne renvoie pas « Doliprane Forte 500mg »",
+      simple.length === 1 && simple[0].nom === `${marque} Doliprane 500mg`,
+      JSON.stringify(simple)
+    );
+
+    const long = await chargerMedicamentsParNoms([`${marque} DOLIPRANE   FORTE 500MG`]);
+    verifier(
+      "la recherche du nom long renvoie la ligne longue (casse et espacement ignorés)",
+      long.length === 1 && long[0].nom === `${marque} Doliprane Forte 500mg`,
+      JSON.stringify(long)
+    );
+
+    const absent = await chargerMedicamentsParNoms([`${marque} Doliprane`]);
+    verifier(
+      "un nom plus court que les lignes candidates ne renvoie rien",
+      absent.length === 0,
+      JSON.stringify(absent)
+    );
+  } finally {
+    definirClient(clientEspion);
+  }
 };
 
 try {
   // Ces contrôles de forme ne dépendent pas de la présence des lignes en
   // base : ils fonctionnent aussi en lecture seule.
   await verifierFormeDesRequetes(nomsInsere);
+  await verifierChoixLigneExacte();
 
   if (ecriturePossible) {
     console.log("\nRecherche par liste");
@@ -199,8 +297,15 @@ try {
     console.log("\nCasse, espacement et caractères spéciaux");
     await verifierRecherche(nomsInsere);
 
-    // Le % du nom est un joker échappé : « 5%_x » ne doit pas récupérer
-    // une ligne « 500x ».
+    const ambigu = await chargerMedicamentsParNoms([`${marque} Doliprane 500mg`]);
+    verifier(
+      "en base : « Doliprane 500mg » ne renvoie pas la ligne « Doliprane Forte 500mg »",
+      ambigu.length === 1 && ambigu[0].nom === `${marque} Doliprane 500mg`,
+      JSON.stringify(ambigu)
+    );
+
+    // Le % de la ligne « 5%_x » est échappé côté motif : il reste un
+    // caractère littéral et ne doit donc pas jouer le rôle d'un joker.
     const fauxJoker = await chargerMedicamentsParNoms([`${marque} NAC, sirop (200 ml) "fort" 500x`]);
     verifier("un % échappé ne devient pas un joker", fauxJoker.length === 0, JSON.stringify(fauxJoker));
 
@@ -260,12 +365,23 @@ try {
     ecartErr ? ecartErr.message : JSON.stringify(ecart)
   );
 } finally {
+  // Les contrôles ne lèvent pas d'exception et le bloc s'exécute donc dans
+  // tous les cas. La suppression passe par le préfixe du nom, non par les
+  // identifiants : toute ligne créée pendant l'exécution — y compris par
+  // assurerMedicament — est retirée, même après un échec en plein milieu.
   if (ecriturePossible) {
     console.log("\nNettoyage");
-    const { error: suppression } = await clientEspion.from("medicaments").delete().in("id", ids);
+    const { error: suppression } = await clientEspion
+      .from("medicaments")
+      .delete()
+      .like("nom", `${marque}%`);
     if (suppression) console.log(`  suppression impossible : ${suppression.message}`);
     const reste = await clientEspion.from("medicaments").select("id").like("nom", `${marque}%`);
-    verifier("plus aucune ligne de test ne subsiste", (reste.data || []).length === 0);
+    verifier(
+      "plus aucune ligne de test ne subsiste",
+      (reste.data || []).length === 0,
+      JSON.stringify(reste.data)
+    );
   } else {
     console.log("\nAucune donnée de test créée : rien à nettoyer");
   }
