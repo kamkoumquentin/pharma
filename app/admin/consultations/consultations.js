@@ -53,7 +53,7 @@ export default function Consultations({ pharmacieId, token, ville }) {
         <h3 className="text-base font-bold text-gray-800 mb-2">Ville non renseignée</h3>
         <p className="text-sm text-gray-500 mb-4 leading-relaxed">
           Pour afficher les statistiques des consultations effectuées dans votre zone géographique,
-          veuillez renseigner la <strong>ville</strong> de votre pharmacie dans l’onglet <em>« Modifier les infos »</em>.
+          veuillez renseigner la <strong>ville</strong> de votre pharmacie dans l’onglet <em>« Ma pharmacie »</em>.
         </p>
       </div>
     );

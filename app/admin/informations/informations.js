@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  BuildingStorefrontIcon,
   CalendarDaysIcon,
   PlusIcon,
   TrashIcon,
@@ -30,25 +29,38 @@ function heureCourte(value) {
   return value ? value.slice(0, 5) : "";
 }
 
-function dateHeureDouala(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Africa/Douala",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(date);
-  const part = (type) => parts.find((item) => item.type === type)?.value || "";
-  return `${part("year")}-${part("month")}-${part("day")}T${part("hour")}:${part("minute")}`;
-}
-
 function dateHeureVersIsoDouala(value) {
   return new Date(`${value}:00+01:00`).toISOString();
+}
+
+function etatPeriode(ligne, maintenant = Date.now()) {
+  const debut = new Date(ligne.debut).getTime();
+  const fin = new Date(ligne.fin).getTime();
+  if (Number.isNaN(debut) || Number.isNaN(fin) || fin <= maintenant) return "terminee";
+  if (debut > maintenant) return "a-venir";
+  return "en-cours";
+}
+
+function trierPeriodes(lignes) {
+  const ordre = { "en-cours": 0, "a-venir": 1, terminee: 2 };
+  const maintenant = Date.now();
+  return [...lignes].sort((a, b) => {
+    const differenceEtat = ordre[etatPeriode(a, maintenant)] - ordre[etatPeriode(b, maintenant)];
+    if (differenceEtat !== 0) return differenceEtat;
+    const differenceDebut = new Date(a.debut).getTime() - new Date(b.debut).getTime();
+    return etatPeriode(a, maintenant) === "terminee" ? -differenceDebut : differenceDebut;
+  });
+}
+
+function validerDatesPeriode(periode) {
+  if (!periode.debut || !periode.fin) return "";
+  if (periode.fin <= periode.debut) {
+    return "La date et l'heure de fin doivent être postérieures au début.";
+  }
+  const fin = new Date(dateHeureVersIsoDouala(periode.fin)).getTime();
+  if (Number.isNaN(fin)) return "La date et l'heure de fin sont invalides.";
+  if (fin <= Date.now()) return "Cette période ne peut pas être entièrement dans le passé.";
+  return "";
 }
 
 function nomErreur(error) {
@@ -63,30 +75,6 @@ function detailErreur(error) {
   return `${nomErreur(error)}${code}`;
 }
 
-function champTexteStatut(status) {
-  const value =
-    status?.texte ??
-    status?.statut_actuel ??
-    status?.statut ??
-    status?.status ??
-    status?.etat;
-  return value === undefined || value === null
-    ? "Statut indisponible"
-    : String(value);
-}
-
-function couleurStatut(status) {
-  const color = status?.couleur ?? status?.color;
-  if (typeof color === "string" && /^(#[\da-f]{3,8}|[a-z]{3,20})$/i.test(color)) {
-    return color;
-  }
-  const text = champTexteStatut(status).toLowerCase();
-  if (text.includes("garde")) return "#2563eb";
-  if (text.includes("ouvert")) return "#059669";
-  if (text.includes("ferm")) return "#dc2626";
-  return "#6b7280";
-}
-
 function champClasse(label) {
   return (
     <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-emerald-800">
@@ -95,13 +83,20 @@ function champClasse(label) {
   );
 }
 
-export default function InformationsPharmacie({ info, onUpdate }) {
+export default function InformationsPharmacie({
+  info,
+  section,
+  embedded = false,
+  onUpdate,
+  onFormStateChange,
+  onStatusChange,
+}) {
   const showToast = useToast();
   const [telephone, setTelephone] = useState(info.telephone || "");
   const [telephoneErreur, setTelephoneErreur] = useState("");
   const [enregistrementTelephone, setEnregistrementTelephone] = useState(false);
   const [horaires, setHoraires] = useState(
-    JOURS.map(({ numero }) => ({ jour: numero, plages: [] }))
+    JOURS.map(({ numero }) => ({ jour: numero, plages: [], ouvert: false }))
   );
   const [fermetures, setFermetures] = useState([]);
   const [gardes, setGardes] = useState([]);
@@ -109,14 +104,52 @@ export default function InformationsPharmacie({ info, onUpdate }) {
   const [chargement, setChargement] = useState(true);
   const [erreursChargement, setErreursChargement] = useState({});
   const [enregistrementHoraires, setEnregistrementHoraires] = useState(false);
-  const [jourSourceCopie, setJourSourceCopie] = useState("1");
   const [nouvelleFermeture, setNouvelleFermeture] = useState({
     debut: "",
     fin: "",
     motif: "",
   });
   const [nouvelleGarde, setNouvelleGarde] = useState({ debut: "", fin: "" });
+  const [erreursPeriodes, setErreursPeriodes] = useState({ fermetures: "", gardes: "" });
+  const [voirToutesFermeturesTerminees, setVoirToutesFermeturesTerminees] = useState(false);
+  const [voirToutesGardesTerminees, setVoirToutesGardesTerminees] = useState(false);
   const [actionEnCours, setActionEnCours] = useState("");
+  const [horairesEnregistres, setHorairesEnregistres] = useState(
+    JOURS.map(({ numero }) => ({ jour: numero, ouvert: false, plages: [] }))
+  );
+  const [telephoneEnregistre, setTelephoneEnregistre] = useState(info.telephone || "");
+
+  const horairesModifies = useMemo(
+    () => JSON.stringify(horaires.map(({ jour, ouvert, plages }) => ({
+      jour,
+      ouvert,
+      plages: plages.map(({ ouverture, fermeture }) => ({ ouverture, fermeture })),
+    }))) !== JSON.stringify(horairesEnregistres),
+    [horaires, horairesEnregistres]
+  );
+  const telephoneModifie = telephone !== telephoneEnregistre;
+  const periodeModifiee = Boolean(
+    nouvelleFermeture.debut || nouvelleFermeture.fin || nouvelleFermeture.motif ||
+    nouvelleGarde.debut || nouvelleGarde.fin
+  );
+
+  const annulerHoraires = useCallback(() => {
+    setHoraires(horairesEnregistres.map((jour) => ({
+      jour: jour.jour,
+      ouvert: jour.ouvert,
+      plages: jour.plages.map((plage) => ({ ...plage, cle: NOUVELLE_PLAGE().cle })),
+    })));
+  }, [horairesEnregistres]);
+
+  const annulerTelephone = useCallback(() => {
+    setTelephone(telephoneEnregistre);
+    setTelephoneErreur("");
+  }, [telephoneEnregistre]);
+
+  const annulerPeriodes = useCallback(() => {
+    setNouvelleFermeture({ debut: "", fin: "", motif: "" });
+    setNouvelleGarde({ debut: "", fin: "" });
+  }, []);
 
   const lireDonnees = useCallback(
     () =>
@@ -154,10 +187,12 @@ export default function InformationsPharmacie({ info, onUpdate }) {
         const parJour = JOURS.map(({ numero }) => ({
           jour: numero,
           plages: [],
+          ouvert: false,
         }));
         (heuresResultat.data || []).forEach((ligne) => {
           const jour = parJour[ligne.jour_semaine - 1];
           if (jour) {
+            jour.ouvert = true;
             jour.plages.push({
               cle: `${ligne.jour_semaine}-${jour.plages.length}`,
               ouverture: heureCourte(ligne.ouverture),
@@ -165,6 +200,11 @@ export default function InformationsPharmacie({ info, onUpdate }) {
             });
           }
         });
+        setHorairesEnregistres(parJour.map(({ jour, ouvert, plages }) => ({
+          jour,
+          ouvert,
+          plages: plages.map(({ ouverture, fermeture }) => ({ ouverture, fermeture })),
+        })));
         setHoraires(parJour);
       }
 
@@ -182,12 +222,13 @@ export default function InformationsPharmacie({ info, onUpdate }) {
         erreurs.statut = nomErreur(statutResultat.error);
       } else {
         setStatut(statutResultat.data);
+        onStatusChange?.(statutResultat.data);
       }
 
       setErreursChargement(erreurs);
       setChargement(false);
     },
-    []
+    [onStatusChange]
   );
 
   const chargerDonnees = useCallback(async () => {
@@ -231,14 +272,16 @@ export default function InformationsPharmacie({ info, onUpdate }) {
     };
   }, [appliquerDonnees, lireDonnees]);
 
-  const enregistrerTelephone = async (event) => {
-    event.preventDefault();
+  const sauvegarderTelephone = useCallback(async () => {
     const telephoneNormalise = telephone.replace(/[\s()-]/g, "");
     if (!/^\+237[62]\d{8}$/.test(telephoneNormalise)) {
       setTelephoneErreur(
         "Saisissez un numéro camerounais au format +237 suivi de 9 chiffres, commençant par 6 ou 2."
       );
-      return;
+      return {
+        success: false,
+        error: "Saisissez un numéro camerounais au format +237 suivi de 9 chiffres, commençant par 6 ou 2.",
+      };
     }
 
     setTelephoneErreur("");
@@ -253,16 +296,24 @@ export default function InformationsPharmacie({ info, onUpdate }) {
 
     if (error) {
       console.error("Erreur d'enregistrement du téléphone :", error);
-      showToast(
-        `Impossible d'enregistrer le téléphone : ${detailErreur(error)}`,
-        "error",
-        9000
-      );
-      return;
+      return { success: false, error: detailErreur(error) };
     }
     setTelephone(data.telephone || telephoneNormalise);
+    setTelephoneEnregistre(data.telephone || telephoneNormalise);
     onUpdate?.(data);
-    showToast("Téléphone enregistré.", "success");
+    return { success: true };
+  }, [info.id, onUpdate, telephone]);
+
+  const enregistrerTelephone = async (event) => {
+    event.preventDefault();
+    const result = await sauvegarderTelephone();
+    if (!embedded) {
+      showToast(
+        result.success ? "Téléphone enregistré." : `Impossible d'enregistrer le téléphone : ${result.error}`,
+        result.success ? "success" : "error",
+        result.success ? 4000 : 9000
+      );
+    }
   };
 
   const modifierPlage = (jour, cle, champ, valeur) => {
@@ -281,9 +332,7 @@ export default function InformationsPharmacie({ info, onUpdate }) {
   };
 
   const copierHoraires = () => {
-    const source = horaires.find(
-      (ligne) => ligne.jour === Number(jourSourceCopie)
-    );
+    const source = horaires.find((ligne) => ligne.jour === 1);
     if (!source) return;
     setHoraires((precedents) =>
       precedents.map((ligne) =>
@@ -291,6 +340,7 @@ export default function InformationsPharmacie({ info, onUpdate }) {
           ? ligne
           : {
               ...ligne,
+              ouvert: source.ouvert,
               plages: source.plages.map((plage) => ({
                 ...plage,
                 cle: `${Date.now()}-${Math.random()}`,
@@ -300,25 +350,22 @@ export default function InformationsPharmacie({ info, onUpdate }) {
     );
   };
 
-  const enregistrerHoraires = async (event) => {
-    event.preventDefault();
+  const sauvegarderHoraires = useCallback(async () => {
     for (const jour of horaires) {
       for (const plage of jour.plages) {
         if (
           !/^([01]\d|2[0-3]):[0-5]\d$/.test(plage.ouverture) ||
           !/^([01]\d|2[0-3]):[0-5]\d$/.test(plage.fermeture)
         ) {
-          showToast(
-            `Complétez les heures d'ouverture et de fermeture du ${JOURS[jour.jour - 1].nom}.`,
-            "error"
-          );
-          return;
+          return {
+            success: false,
+            error: `Complétez les heures d'ouverture et de fermeture du ${JOURS[jour.jour - 1].nom}.`,
+          };
         }
       }
     }
     if (erreursChargement.horaires) {
-      showToast("Rechargez les horaires avant de les remplacer.", "error");
-      return;
+      return { success: false, error: "Rechargez les horaires avant de les remplacer." };
     }
 
     setEnregistrementHoraires(true);
@@ -328,13 +375,8 @@ export default function InformationsPharmacie({ info, onUpdate }) {
       .eq("id_pharmacie", info.id);
     if (lectureErreur) {
       console.error("Erreur de lecture des horaires actuels :", lectureErreur);
-      showToast(
-        `Impossible de lire les horaires actuels : ${detailErreur(lectureErreur)}`,
-        "error",
-        9000
-      );
       setEnregistrementHoraires(false);
-      return;
+      return { success: false, error: `Impossible de lire les horaires actuels : ${detailErreur(lectureErreur)}` };
     }
 
     const { error: suppressionErreur } = await supabase
@@ -343,13 +385,8 @@ export default function InformationsPharmacie({ info, onUpdate }) {
       .eq("id_pharmacie", info.id);
     if (suppressionErreur) {
       console.error("Erreur de suppression des anciens horaires :", suppressionErreur);
-      showToast(
-        `Impossible de supprimer les anciens horaires : ${detailErreur(suppressionErreur)}`,
-        "error",
-        9000
-      );
       setEnregistrementHoraires(false);
-      return;
+      return { success: false, error: `Impossible de supprimer les anciens horaires : ${detailErreur(suppressionErreur)}` };
     }
 
     const plagesAInserer = horaires.flatMap((jour) =>
@@ -371,42 +408,61 @@ export default function InformationsPharmacie({ info, onUpdate }) {
         : { error: null };
       if (restaurationErreur) {
         console.error("Erreur de restauration des horaires précédents :", restaurationErreur);
-        showToast(
-          `Échec de l'enregistrement (${detailErreur(insertionErreur)}) et de la restauration (${detailErreur(restaurationErreur)}). Rechargez la page.`,
-          "error",
-          12000
-        );
+        setEnregistrementHoraires(false);
+        return {
+          success: false,
+          error: `Échec de l'enregistrement (${detailErreur(insertionErreur)}) et de la restauration (${detailErreur(restaurationErreur)}). Rechargez la page.`,
+        };
       } else {
-        showToast(
-          `Échec de l'enregistrement des horaires : ${detailErreur(insertionErreur)}. Les horaires précédents ont été restaurés.`,
-          "error",
-          12000
-        );
+        setEnregistrementHoraires(false);
+        return {
+          success: false,
+          error: `Échec de l'enregistrement des horaires : ${detailErreur(insertionErreur)}. Les horaires précédents ont été restaurés.`,
+        };
       }
-      setEnregistrementHoraires(false);
-      return;
     }
 
+    setHorairesEnregistres(horaires.map(({ jour, ouvert, plages }) => ({
+      jour,
+      ouvert,
+      plages: plages.map(({ ouverture, fermeture }) => ({ ouverture, fermeture })),
+    })));
     setErreursChargement((precedentes) => {
       const autresErreurs = { ...precedentes };
       delete autresErreurs.horaires;
       return autresErreurs;
     });
     setEnregistrementHoraires(false);
-    showToast("Horaires hebdomadaires enregistrés.", "success");
+    setChargement(true);
+    await chargerDonnees();
+    return { success: true };
+  }, [chargerDonnees, erreursChargement.horaires, horaires, info.id]);
+
+  const enregistrerHoraires = async (event) => {
+    event?.preventDefault();
+    const result = await sauvegarderHoraires();
+    if (!embedded) {
+      showToast(
+        result.success ? "Horaires hebdomadaires enregistrés." : result.error,
+        result.success ? "success" : "error",
+        result.success ? 4000 : 9000
+      );
+    }
   };
 
-  const ajouterPeriode = async (type, event) => {
-    event.preventDefault();
+  const ajouterPeriode = useCallback(async (type, event = null) => {
+    event?.preventDefault();
     const estFermeture = type === "fermetures";
     const periode = estFermeture ? nouvelleFermeture : nouvelleGarde;
-    if (!periode.debut || !periode.fin || periode.fin <= periode.debut) {
-      showToast("La date et l'heure de fin doivent être postérieures au début.", "error");
-      return;
+    const erreurDates = !periode.debut || !periode.fin
+      ? "Renseignez le début et la fin."
+      : validerDatesPeriode(periode);
+    if (erreurDates) {
+      setErreursPeriodes((precedentes) => ({ ...precedentes, [type]: erreurDates }));
+      return { success: false, error: erreurDates };
     }
     if (erreursChargement[type]) {
-      showToast("Rechargez la liste avant d'ajouter une période.", "error");
-      return;
+      return { success: false, error: "Rechargez la liste avant d'ajouter une période." };
     }
 
     const cleAction = `ajout-${type}`;
@@ -423,13 +479,8 @@ export default function InformationsPharmacie({ info, onUpdate }) {
     const { error } = await supabase.from(table).insert(nouvelleLigne);
     if (error) {
       console.error(`Erreur d'ajout dans ${table} :`, error);
-      showToast(
-        `Impossible d'enregistrer cette période : ${detailErreur(error)}`,
-        "error",
-        9000
-      );
       setActionEnCours("");
-      return;
+      return { success: false, error: `Impossible d'enregistrer cette période : ${detailErreur(error)}` };
     }
 
     if (estFermeture) {
@@ -437,14 +488,26 @@ export default function InformationsPharmacie({ info, onUpdate }) {
     } else {
       setNouvelleGarde({ debut: "", fin: "" });
     }
+    setErreursPeriodes((precedentes) => ({ ...precedentes, [type]: "" }));
     setChargement(true);
     await chargerDonnees();
     setActionEnCours("");
-    showToast(estFermeture ? "Fermeture ajoutée." : "Période de garde ajoutée.", "success");
-  };
+    return { success: true, message: estFermeture ? "Fermeture ajoutée." : "Période de garde ajoutée." };
+  }, [chargerDonnees, erreursChargement, info.id, nouvelleFermeture, nouvelleGarde]);
 
   const supprimerPeriode = async (type, ligne) => {
     const estFermeture = type === "fermetures";
+    const etat = etatPeriode(ligne);
+    if (
+      etat !== "terminee" &&
+      !window.confirm(
+        estFermeture
+          ? "Supprimer cette fermeture exceptionnelle ? Le statut affiché aux patients peut changer."
+          : "Supprimer cette période de garde ? Le statut affiché aux patients peut changer."
+      )
+    ) {
+      return;
+    }
     const table = estFermeture ? "pharmacie_fermetures" : "pharmacie_gardes";
     const cleAction = `suppression-${type}-${ligne.id}`;
     setActionEnCours(cleAction);
@@ -470,7 +533,21 @@ export default function InformationsPharmacie({ info, onUpdate }) {
     showToast(estFermeture ? "Fermeture supprimée." : "Période de garde supprimée.", "success");
   };
 
-  const champsDateHeure = (value, onChange, label, name) => (
+  const modifierDatePeriode = (type, champ, valeur) => {
+    const periode = type === "fermetures" ? nouvelleFermeture : nouvelleGarde;
+    const prochainePeriode = { ...periode, [champ]: valeur };
+    if (type === "fermetures") {
+      setNouvelleFermeture(prochainePeriode);
+    } else {
+      setNouvelleGarde(prochainePeriode);
+    }
+    setErreursPeriodes((precedentes) => ({
+      ...precedentes,
+      [type]: validerDatesPeriode(prochainePeriode),
+    }));
+  };
+
+  const champsDateHeure = (value, onChange, label, name, erreur = "") => (
     <label className="block min-w-0 flex-1">
       {champClasse(label)}
       <input
@@ -479,69 +556,168 @@ export default function InformationsPharmacie({ info, onUpdate }) {
         name={name}
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        aria-invalid={Boolean(erreur)}
+        aria-describedby={erreur ? `${name}-erreur` : undefined}
         required
         className="h-11 w-full rounded-xl border border-gray-200 px-3 text-sm text-gray-700 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10"
       />
+      {erreur && <span id={`${name}-erreur`} role="alert" className="mt-1 block text-xs text-rose-700">{erreur}</span>}
     </label>
   );
 
   const afficherPeriode = (ligne) => {
-    const debut = dateHeureDouala(ligne.debut);
-    const fin = dateHeureDouala(ligne.fin);
-    return `${debut.replace("T", " ")} – ${fin.replace("T", " ")} (heure de Douala)`;
+    const formater = (value) => {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      const jourEtDate = new Intl.DateTimeFormat("fr-FR", {
+        timeZone: "Africa/Douala",
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      }).format(date);
+      const heure = new Intl.DateTimeFormat("fr-FR", {
+        timeZone: "Africa/Douala",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).format(date).replace(":", "h");
+      return `${jourEtDate} à ${heure}`;
+    };
+    const debut = formater(ligne.debut);
+    const fin = formater(ligne.fin);
+    return debut && fin ? `Du ${debut} au ${fin}` : "Dates indisponibles";
   };
+
+  const afficherListePeriodes = (type, lignes, erreurChargement, messageVide, avecMotif = false) => {
+    if (erreurChargement) {
+      return (
+        <p role="alert" className="mt-4 text-sm text-rose-700">
+          Lecture des {type} impossible : {erreurChargement}
+        </p>
+      );
+    }
+
+    const ordre = trierPeriodes(lignes);
+    const terminees = ordre.filter((ligne) => etatPeriode(ligne) === "terminee");
+    const nonTerminees = ordre.filter((ligne) => etatPeriode(ligne) !== "terminee");
+    const voirTerminees = type === "fermetures" ? voirToutesFermeturesTerminees : voirToutesGardesTerminees;
+    const basculeTerminees = type === "fermetures"
+      ? setVoirToutesFermeturesTerminees
+      : setVoirToutesGardesTerminees;
+    const lignesVisibles = [
+      ...nonTerminees,
+      ...(terminees.length > 3 && !voirTerminees ? terminees.slice(0, 3) : terminees),
+    ];
+    const stylesEtat = {
+      "en-cours": { label: "En cours", classes: "bg-amber-100 text-amber-900" },
+      "a-venir": { label: "À venir", classes: "bg-sky-100 text-sky-800" },
+      terminee: { label: "Terminée", classes: "bg-gray-100 text-gray-500" },
+    };
+
+    return (
+      <>
+        <ul className="mt-4 divide-y divide-gray-100">
+          {lignesVisibles.map((ligne) => {
+            const etat = etatPeriode(ligne);
+            const presentation = stylesEtat[etat];
+            const cleSuppression = `suppression-${type}-${ligne.id}`;
+            return (
+              <li
+                key={ligne.id}
+                className={`flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between ${
+                  etat === "terminee" ? "text-gray-500" : "text-gray-700"
+                }`}
+              >
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="text-sm">{afficherPeriode(ligne)}</span>
+                  {avecMotif && ligne.motif && (
+                    <span className="text-sm text-gray-500">— {ligne.motif}</span>
+                  )}
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${presentation.classes}`}>
+                    {presentation.label}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  disabled={actionEnCours === cleSuppression}
+                  onClick={() => supprimerPeriode(type, ligne)}
+                  className="self-start rounded-lg p-2 text-gray-400 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 sm:self-auto"
+                  aria-label={type === "fermetures"
+                    ? "Supprimer cette fermeture exceptionnelle"
+                    : "Supprimer cette période de garde"}
+                >
+                  <TrashIcon className="h-4 w-4" />
+                </button>
+              </li>
+            );
+          })}
+          {lignes.length === 0 && (
+            <li className="py-3 text-sm text-gray-400">{messageVide}</li>
+          )}
+        </ul>
+        {terminees.length > 3 && (
+          <button
+            type="button"
+            onClick={() => basculeTerminees((visible) => !visible)}
+            className="mt-2 text-sm font-semibold text-emerald-700 hover:text-emerald-900"
+          >
+            {voirTerminees
+              ? "Masquer les périodes terminées"
+              : `Voir les périodes terminées (${terminees.length})`}
+          </button>
+        )}
+      </>
+    );
+  };
+
+  const soumettrePeriode = async (type, event) => {
+    const result = await ajouterPeriode(type, event);
+    if (embedded) {
+      showToast(
+        result.success ? result.message : result.error,
+        result.success ? "success" : "error",
+        result.success ? 4000 : 9000
+      );
+    }
+  };
+
+  useEffect(() => {
+    onFormStateChange?.("telephone", {
+      dirty: telephoneModifie,
+      cancel: annulerTelephone,
+      save: sauvegarderTelephone,
+      loading: enregistrementTelephone,
+    });
+  }, [annulerTelephone, enregistrementTelephone, onFormStateChange, telephoneModifie, sauvegarderTelephone]);
+
+  useEffect(() => {
+    onFormStateChange?.("horaires", {
+      dirty: horairesModifies,
+      cancel: annulerHoraires,
+      save: sauvegarderHoraires,
+      loading: enregistrementHoraires || chargement,
+    });
+  }, [annulerHoraires, chargement, enregistrementHoraires, horairesModifies, onFormStateChange, sauvegarderHoraires]);
+
+  useEffect(() => {
+    onFormStateChange?.("fermetures", {
+      dirty: periodeModifiee,
+      cancel: annulerPeriodes,
+      loading: Boolean(actionEnCours),
+    });
+  }, [actionEnCours, annulerPeriodes, onFormStateChange, periodeModifiee]);
+
+  if (!["general", "horaires", "fermetures"].includes(section)) return null;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
+      {section === "general" && (
       <section className="rounded-2xl border border-gray-200/60 bg-white p-6 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
-            <BuildingStorefrontIcon className="h-5 w-5" />
-          </div>
-          <div>
-            <h2 className="text-lg font-bold text-gray-800">Informations de la pharmacie</h2>
-            <p className="text-xs text-gray-500">{info.nom}</p>
-          </div>
-        </div>
-        {Object.keys(erreursChargement).length > 0 && (
-          <button
-            type="button"
-            onClick={() => {
-              setChargement(true);
-              chargerDonnees();
-            }}
-            disabled={chargement}
-            className="mt-4 rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            Recharger les informations
-          </button>
-        )}
-        <div className="mt-5 rounded-xl border border-gray-100 bg-gray-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-            Statut actuel affiché aux patients
-          </p>
-          {erreursChargement.statut ? (
-            <p role="alert" className="mt-2 text-sm text-rose-700">
-              Impossible de lire le statut : {erreursChargement.statut}
-            </p>
-          ) : (
-            <p
-              className="mt-2 inline-flex rounded-full px-3 py-1 text-sm font-bold"
-              style={{
-                color: couleurStatut(statut),
-                backgroundColor: `${couleurStatut(statut)}18`,
-              }}
-            >
-              {champTexteStatut(statut)}
-            </p>
-          )}
-        </div>
-
-        <form onSubmit={enregistrerTelephone} className="mt-6">
+        <form onSubmit={enregistrerTelephone}>
           <label htmlFor="telephone-pharmacie">
             {champClasse("Téléphone de la pharmacie")}
           </label>
-          <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <input
               id="telephone-pharmacie"
               type="tel"
@@ -555,15 +731,8 @@ export default function InformationsPharmacie({ info, onUpdate }) {
               aria-invalid={Boolean(telephoneErreur)}
               aria-describedby={telephoneErreur ? "telephone-erreur" : undefined}
               placeholder="+237 6XX XXX XXX"
-              className="h-11 min-w-0 flex-1 rounded-xl border border-gray-200 px-4 text-sm text-gray-700 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10"
+              className="h-11 w-full max-w-[260px] rounded-xl border border-gray-200 px-4 text-sm text-gray-700 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10"
             />
-            <button
-              type="submit"
-              disabled={enregistrementTelephone}
-              className="h-11 rounded-xl bg-emerald-700 px-5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:opacity-50"
-            >
-              {enregistrementTelephone ? "Enregistrement..." : "Enregistrer"}
-            </button>
           </div>
           {telephoneErreur && (
             <p id="telephone-erreur" role="alert" className="mt-2 text-sm text-rose-700">
@@ -575,38 +744,25 @@ export default function InformationsPharmacie({ info, onUpdate }) {
           </p>
         </form>
       </section>
+      )}
 
+      {section === "horaires" && (
       <section className="rounded-2xl border border-gray-200/60 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <CalendarDaysIcon className="h-6 w-6 text-emerald-700" />
             <div>
               <h2 className="font-bold text-gray-800">Horaires hebdomadaires</h2>
-              <p className="text-xs text-gray-500">Heures locales du Cameroun (UTC+1).</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <select
-              aria-label="Jour à copier"
-              value={jourSourceCopie}
-              onChange={(event) => setJourSourceCopie(event.target.value)}
-              className="h-10 rounded-lg border border-gray-200 px-3 text-sm text-gray-700"
-            >
-              {JOURS.map((jour) => (
-                <option key={jour.numero} value={jour.numero}>
-                  {jour.nom}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={copierHoraires}
-              disabled={Boolean(erreursChargement.horaires) || chargement}
-              className="h-10 rounded-lg border border-emerald-200 px-3 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50"
-            >
-              Copier sur les autres jours
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={copierHoraires}
+            disabled={Boolean(erreursChargement.horaires) || chargement}
+            className="h-10 rounded-lg border border-emerald-200 px-3 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50"
+          >
+            Copier le lundi sur tous les jours
+          </button>
         </div>
 
         {erreursChargement.horaires && (
@@ -614,20 +770,36 @@ export default function InformationsPharmacie({ info, onUpdate }) {
             Lecture des horaires impossible : {erreursChargement.horaires}
           </p>
         )}
-        <form onSubmit={enregistrerHoraires} className="mt-5 space-y-4">
+        <form onSubmit={enregistrerHoraires} className="mt-3 space-y-2">
           {horaires.map((jour) => (
             <div
               key={jour.jour}
-              className="grid gap-3 border-t border-gray-100 pt-4 sm:grid-cols-[7rem_1fr]"
+              className="grid items-center gap-2 border-t border-gray-100 pt-2 sm:grid-cols-[10rem_1fr]"
             >
-              <h3 className="pt-2 text-sm font-bold text-gray-700">
-                {JOURS[jour.jour - 1].nom}
-              </h3>
-              <div className="space-y-2">
-                {jour.plages.length === 0 && (
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-bold text-gray-700">
+                  {JOURS[jour.jour - 1].nom}
+                </h3>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={jour.ouvert}
+                  aria-label={`${JOURS[jour.jour - 1].nom} ouvert`}
+                  onClick={() => setHoraires((precedents) => precedents.map((ligne) =>
+                    ligne.jour === jour.jour
+                      ? { ...ligne, ouvert: !ligne.ouvert, plages: !ligne.ouvert && ligne.plages.length === 0 ? [NOUVELLE_PLAGE()] : !ligne.ouvert ? ligne.plages : [] }
+                      : ligne
+                  ))}
+                  className={`relative h-6 w-11 rounded-full transition ${jour.ouvert ? "bg-emerald-600" : "bg-gray-300"}`}
+                >
+                  <span className={`absolute top-1 h-4 w-4 rounded-full bg-white transition ${jour.ouvert ? "left-6" : "left-1"}`} />
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {!jour.ouvert && (
                   <p className="py-2 text-sm text-gray-400">Fermé</p>
                 )}
-                {jour.plages.map((plage) => {
+                {jour.ouvert && jour.plages.map((plage) => {
                   const plageDeNuit =
                     plage.ouverture &&
                     plage.fermeture &&
@@ -671,16 +843,13 @@ export default function InformationsPharmacie({ info, onUpdate }) {
                         aria-label={`Supprimer la plage du ${JOURS[jour.jour - 1].nom}`}
                         onClick={() =>
                           setHoraires((precedents) =>
-                            precedents.map((ligne) =>
-                              ligne.jour === jour.jour
-                                ? {
-                                    ...ligne,
-                                    plages: ligne.plages.filter(
-                                      (element) => element.cle !== plage.cle
-                                    ),
-                                  }
-                                : ligne
-                            )
+                            precedents.map((ligne) => {
+                              if (ligne.jour !== jour.jour) return ligne;
+                              const plages = ligne.plages.filter(
+                                (element) => element.cle !== plage.cle
+                              );
+                              return { ...ligne, plages, ouvert: plages.length > 0 };
+                            })
                           )
                         }
                         className="rounded-lg p-2 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
@@ -690,7 +859,7 @@ export default function InformationsPharmacie({ info, onUpdate }) {
                     </div>
                   );
                 })}
-                <button
+                {jour.ouvert && <button
                   type="button"
                   onClick={() =>
                     setHoraires((precedents) =>
@@ -704,62 +873,42 @@ export default function InformationsPharmacie({ info, onUpdate }) {
                   className="inline-flex items-center gap-1 py-1 text-xs font-semibold text-emerald-700 hover:text-emerald-900"
                 >
                   <PlusIcon className="h-4 w-4" />
-                  Ajouter une plage
-                </button>
+                  +
+                </button>}
               </div>
             </div>
           ))}
-          <div className="flex justify-end border-t border-gray-100 pt-4">
-            <button
-              type="submit"
-              disabled={chargement || enregistrementHoraires || Boolean(erreursChargement.horaires)}
-              className="h-11 rounded-xl bg-emerald-700 px-5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:opacity-50"
-            >
-              {enregistrementHoraires ? "Enregistrement..." : "Enregistrer les horaires"}
-            </button>
-          </div>
         </form>
       </section>
+      )}
 
+      {section === "fermetures" && <>
       <section className="rounded-2xl border border-gray-200/60 bg-white p-6 shadow-sm">
         <h2 className="font-bold text-gray-800">Fermetures exceptionnelles</h2>
-        <p className="mt-1 text-xs text-gray-500">Saisies et affichées à l&apos;heure de Douala (UTC+1).</p>
-        {erreursChargement.fermetures ? (
-          <p role="alert" className="mt-4 text-sm text-rose-700">
-            Lecture des fermetures impossible : {erreursChargement.fermetures}
-          </p>
-        ) : (
-          <ul className="mt-4 divide-y divide-gray-100">
-            {fermetures.map((ligne) => (
-              <li key={ligne.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                <span className="text-sm text-gray-700">
-                  {afficherPeriode(ligne)}
-                  {ligne.motif ? ` — ${ligne.motif}` : ""}
-                </span>
-                <button
-                  type="button"
-                  disabled={actionEnCours === `suppression-fermetures-${ligne.id}`}
-                  onClick={() => supprimerPeriode("fermetures", ligne)}
-                  className="rounded-lg p-2 text-rose-600 hover:bg-rose-50 disabled:opacity-50"
-                  aria-label="Supprimer cette fermeture"
-                >
-                  <TrashIcon className="h-4 w-4" />
-                </button>
-              </li>
-            ))}
-            {fermetures.length === 0 && (
-              <li className="py-3 text-sm text-gray-400">Aucune fermeture exceptionnelle.</li>
-            )}
-          </ul>
+        {afficherListePeriodes(
+          "fermetures",
+          fermetures,
+          erreursChargement.fermetures,
+          "Aucune fermeture exceptionnelle.",
+          true
         )}
         <form
-          onSubmit={(event) => ajouterPeriode("fermetures", event)}
-          className="mt-4 flex flex-wrap items-end gap-3 border-t border-gray-100 pt-4"
+          onSubmit={(event) => soumettrePeriode("fermetures", event)}
+          className="mt-4 flex flex-col items-stretch gap-3 border-t border-gray-100 pt-4 sm:flex-row sm:items-end"
         >
-          {champsDateHeure(nouvelleFermeture.debut, (debut) =>
-            setNouvelleFermeture((precedent) => ({ ...precedent, debut })), "Début", "fermeture-debut")}
-          {champsDateHeure(nouvelleFermeture.fin, (fin) =>
-            setNouvelleFermeture((precedent) => ({ ...precedent, fin })), "Fin", "fermeture-fin")}
+          {champsDateHeure(
+            nouvelleFermeture.debut,
+            (debut) => modifierDatePeriode("fermetures", "debut", debut),
+            "Début",
+            "fermeture-debut"
+          )}
+          {champsDateHeure(
+            nouvelleFermeture.fin,
+            (fin) => modifierDatePeriode("fermetures", "fin", fin),
+            "Fin",
+            "fermeture-fin",
+            erreursPeriodes.fermetures
+          )}
           <label className="block min-w-0 flex-1">
             {champClasse("Motif (facultatif)")}
             <input
@@ -781,44 +930,34 @@ export default function InformationsPharmacie({ info, onUpdate }) {
             Ajouter
           </button>
         </form>
+        <p className="mt-2 text-xs text-gray-500">Ajouter enregistre immédiatement.</p>
       </section>
 
       <section className="rounded-2xl border border-gray-200/60 bg-white p-6 shadow-sm">
         <h2 className="font-bold text-gray-800">Périodes de garde</h2>
-        <p className="mt-1 text-xs text-gray-500">Saisies et affichées à l&apos;heure de Douala (UTC+1).</p>
-        {erreursChargement.gardes ? (
-          <p role="alert" className="mt-4 text-sm text-rose-700">
-            Lecture des gardes impossible : {erreursChargement.gardes}
-          </p>
-        ) : (
-          <ul className="mt-4 divide-y divide-gray-100">
-            {gardes.map((ligne) => (
-              <li key={ligne.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                <span className="text-sm text-gray-700">{afficherPeriode(ligne)}</span>
-                <button
-                  type="button"
-                  disabled={actionEnCours === `suppression-gardes-${ligne.id}`}
-                  onClick={() => supprimerPeriode("gardes", ligne)}
-                  className="rounded-lg p-2 text-rose-600 hover:bg-rose-50 disabled:opacity-50"
-                  aria-label="Supprimer cette période de garde"
-                >
-                  <TrashIcon className="h-4 w-4" />
-                </button>
-              </li>
-            ))}
-            {gardes.length === 0 && (
-              <li className="py-3 text-sm text-gray-400">Aucune période de garde enregistrée.</li>
-            )}
-          </ul>
+        {afficherListePeriodes(
+          "gardes",
+          gardes,
+          erreursChargement.gardes,
+          "Aucune période de garde enregistrée."
         )}
         <form
-          onSubmit={(event) => ajouterPeriode("gardes", event)}
-          className="mt-4 flex flex-wrap items-end gap-3 border-t border-gray-100 pt-4"
+          onSubmit={(event) => soumettrePeriode("gardes", event)}
+          className="mt-4 flex flex-col items-stretch gap-3 border-t border-gray-100 pt-4 sm:flex-row sm:items-end"
         >
-          {champsDateHeure(nouvelleGarde.debut, (debut) =>
-            setNouvelleGarde((precedent) => ({ ...precedent, debut })), "Début", "garde-debut")}
-          {champsDateHeure(nouvelleGarde.fin, (fin) =>
-            setNouvelleGarde((precedent) => ({ ...precedent, fin })), "Fin", "garde-fin")}
+          {champsDateHeure(
+            nouvelleGarde.debut,
+            (debut) => modifierDatePeriode("gardes", "debut", debut),
+            "Début",
+            "garde-debut"
+          )}
+          {champsDateHeure(
+            nouvelleGarde.fin,
+            (fin) => modifierDatePeriode("gardes", "fin", fin),
+            "Fin",
+            "garde-fin",
+            erreursPeriodes.gardes
+          )}
           <button
             type="submit"
             disabled={Boolean(erreursChargement.gardes) || actionEnCours === "ajout-gardes"}
@@ -827,7 +966,9 @@ export default function InformationsPharmacie({ info, onUpdate }) {
             Ajouter
           </button>
         </form>
+        <p className="mt-2 text-xs text-gray-500">Ajouter enregistre immédiatement.</p>
       </section>
+      </>}
     </div>
   );
 }

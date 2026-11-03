@@ -2,7 +2,6 @@
 
 import { 
   BuildingStorefrontIcon, 
-  PencilIcon, 
   PlusCircleIcon, 
   Squares2X2Icon, 
   ArrowLeftStartOnRectangleIcon, 
@@ -11,15 +10,14 @@ import {
   MagnifyingGlassIcon,
   CalendarDaysIcon,
 } from "@heroicons/react/24/solid";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Centrale from "./contenu";
-import Modification from "./modifier/modifier";
 import Ajouter from "./ajouter/ajouter";
 import ImportationStock from "./import/import";
 import Consultations from "./consultations/consultations";
 import RechercheGlobale from "./recherche/recherche";
-import InformationsPharmacie from "./informations/informations";
+import MaPharmacie from "./ma-pharmacie";
 import { supabase } from "@/app/lib/supabaseClient";
 import { useToast } from "@/app/components/Toast";
 
@@ -31,13 +29,23 @@ const MedicalMapPinIcon = ({ className = "w-5 h-5" }) => (
   </svg>
 );
 
+function capitaliserMots(value) {
+  return String(value || "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((mot) => `${mot.charAt(0).toLocaleUpperCase("fr-FR")}${mot.slice(1).toLocaleLowerCase("fr-FR")}`)
+    .join(" ");
+}
+
 export default function Acceuil() {
-  const [page, setpage] = useState("l"); // 'l' for stock list, 'm' for modification, 'a' for add
+  const [page, setpage] = useState("l");
   const [info, setinfo] = useState({ id: "", nom: "", ville: "", emplacement: "", photo: "" });
   const [token, setToken] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
   const [offreAModifier, setOffreAModifier] = useState(null);
+  const [modificationsNonEnregistrees, setModificationsNonEnregistrees] = useState(false);
+  const annulerModificationsRef = useRef(null);
   const nav = useRouter();
   const showToast = useToast();
 
@@ -110,10 +118,31 @@ export default function Acceuil() {
     fetchProfile();
   }, [nav, showToast]);
 
+  const signalerModifications = useCallback((modifie, annuler) => {
+    annulerModificationsRef.current = annuler;
+    setModificationsNonEnregistrees(modifie);
+  }, []);
+
   const naviger = (idPage) => {
+    if (modificationsNonEnregistrees) {
+      if (!window.confirm("Des modifications ne sont pas enregistrées. Les abandonner ?")) return;
+      annulerModificationsRef.current?.();
+      annulerModificationsRef.current = null;
+      setModificationsNonEnregistrees(false);
+    }
     setOffreAModifier(null);
     setpage(idPage);
   };
+
+  useEffect(() => {
+    if (!modificationsNonEnregistrees) return;
+    const avertirAvantQuitter = (event) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", avertirAvantQuitter);
+    return () => window.removeEventListener("beforeunload", avertirAvantQuitter);
+  }, [modificationsNonEnregistrees]);
 
   const deconnexion = async () => {
     try {
@@ -127,14 +156,23 @@ export default function Acceuil() {
     nav.push("/admin/connexion");
   };
 
+  const ouvrirDeconnexion = () => {
+    if (modificationsNonEnregistrees) {
+      if (!window.confirm("Des modifications ne sont pas enregistrées. Les abandonner ?")) return;
+      annulerModificationsRef.current?.();
+      annulerModificationsRef.current = null;
+      setModificationsNonEnregistrees(false);
+    }
+    setIsLogoutConfirmOpen(true);
+  };
+
   const navItems = [
     { id: "l", label: "Voir le stock", icon: Squares2X2Icon },
     { id: "a", label: "Ajouter un médicament", icon: PlusCircleIcon },
     { id: "i", label: "Importation automatique", icon: DocumentTextIcon },
     { id: "c", label: "Consultations", icon: UsersIcon },
     { id: "r", label: "Rechercher un produit", icon: MagnifyingGlassIcon },
-    { id: "h", label: "Informations pharmacie", icon: CalendarDaysIcon },
-    { id: "m", label: "Modifier les infos", icon: PencilIcon },
+    { id: "pharmacie", label: "Ma pharmacie", icon: CalendarDaysIcon },
   ];
 
   if (loadingProfile) {
@@ -160,16 +198,6 @@ export default function Acceuil() {
         onOffreAModifierConsommee={() => setOffreAModifier(null)}
       />
     );
-  } else if (page === "m") {
-    ComposantCentral = (
-      <Modification 
-        info={info} 
-        token={token} 
-        onUpdate={(newProfile) => {
-          setinfo(newProfile);
-        }} 
-      />
-    );
   } else if (page === "a") {
     ComposantCentral = (
       <Ajouter
@@ -188,11 +216,12 @@ export default function Acceuil() {
     ComposantCentral = <Consultations pharmacieId={info.id} token={token} ville={info.ville} />;
   } else if (page === "r") {
     ComposantCentral = <RechercheGlobale pharmacieId={info.id} token={token} />;
-  } else if (page === "h") {
+  } else if (page === "pharmacie") {
     ComposantCentral = (
-      <InformationsPharmacie
+      <MaPharmacie
         info={info}
         onUpdate={(newProfile) => setinfo(newProfile)}
+        onUnsavedState={signalerModifications}
       />
     );
   }
@@ -201,11 +230,11 @@ export default function Acceuil() {
     <div className="fixed inset-0 flex h-dvh w-full shrink-0 bg-gray-50/50 overflow-hidden font-sans">
       
       {/* Sidebar latérale */}
-      <aside className="w-80 h-full bg-emerald-950 text-white flex flex-col border-r border-emerald-900/50 shrink-0">
+      <aside className="w-16 md:w-80 h-full bg-emerald-950 text-white flex flex-col border-r border-emerald-900/50 shrink-0">
         
         {/* Info Pharmacie */}
-        <div className="p-6 border-b border-emerald-900/40 flex flex-col items-center">
-          <div className="relative w-20 h-20 mb-4 bg-emerald-800/80 rounded-2xl flex items-center justify-center border border-emerald-700/50 shadow-inner overflow-hidden group">
+        <div className="p-2 md:p-6 border-b border-emerald-900/40 flex flex-col items-center">
+          <div className="relative w-10 h-10 md:w-20 md:h-20 mb-0 md:mb-4 bg-emerald-800/80 rounded-xl md:rounded-2xl flex items-center justify-center border border-emerald-700/50 shadow-inner overflow-hidden group">
             {info.photo ? (
               <img 
                 src={info.photo} 
@@ -213,22 +242,26 @@ export default function Acceuil() {
                 className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" 
               />
             ) : (
-              <BuildingStorefrontIcon className="w-10 h-10 text-emerald-200" />
+              <BuildingStorefrontIcon className="w-6 h-6 md:w-10 md:h-10 text-emerald-200" />
             )}
           </div>
-          <h2 className="font-bold text-center text-lg leading-tight truncate w-full text-emerald-50">
-            {info.nom || "Chargement..."}
+          <h2 className="hidden md:block font-bold text-center text-lg leading-tight truncate w-full text-emerald-50">
+            {capitaliserMots(info.nom) || "Chargement..."}
           </h2>
-          <p className="text-xs text-emerald-300/80 flex items-center justify-center gap-1 mt-1.5 truncate w-full">
+          <p className="hidden md:flex text-xs text-emerald-300/80 items-center justify-center gap-1 mt-1.5 truncate w-full">
             <MedicalMapPinIcon className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
             <span className="truncate">
-              {info.ville ? (info.emplacement ? `${info.ville} • ${info.emplacement}` : info.ville) : (info.emplacement || "Non spécifié")}
+              {info.ville
+                ? (info.emplacement
+                  ? `${capitaliserMots(info.ville)} • ${capitaliserMots(info.emplacement)}`
+                  : capitaliserMots(info.ville))
+                : (capitaliserMots(info.emplacement) || "Non spécifié")}
             </span>
           </p>
         </div>
 
         {/* Menu Navigation */}
-        <nav className="flex-1 min-h-0 px-4 py-6 space-y-1.5 overflow-hidden">
+        <nav className="flex-1 min-h-0 overflow-y-auto px-2 py-4 md:px-4 md:py-6 space-y-1.5">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = page === item.id || (item.id === "l" && page === "p");
@@ -236,30 +269,32 @@ export default function Acceuil() {
               <button
                 key={item.id}
                 onClick={() => naviger(item.id)}
-                className={`w-full flex items-center px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-200 cursor-pointer group ${
+                title={item.label}
+                className={`w-full flex items-center justify-center md:justify-start px-2 md:px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-200 cursor-pointer group ${
                   isActive
                     ? "bg-emerald-800 text-white shadow-md shadow-emerald-950/40"
                     : "text-emerald-100/70 hover:bg-emerald-900/40 hover:text-white"
                 }`}
               >
-                <Icon className={`w-5 h-5 mr-3 transition-colors ${
+                <Icon className={`w-5 h-5 mr-0 md:mr-3 transition-colors ${
                   isActive ? "text-emerald-300" : "text-emerald-300/50 group-hover:text-emerald-300"
                 }`} />
-                {item.label}
+                <span className="sr-only md:not-sr-only">{item.label}</span>
               </button>
             );
           })}
         </nav>
 
         {/* Pied de Sidebar */}
-        <div className="p-4 border-t border-emerald-900/40 space-y-1.5 bg-emerald-950/60">
+        <div className="p-2 md:p-4 border-t border-emerald-900/40 space-y-1.5 bg-emerald-950/60">
 
           <button
-            onClick={() => setIsLogoutConfirmOpen(true)}
-            className="w-full flex items-center px-4 py-2.5 rounded-xl text-xs font-bold text-rose-300 hover:bg-rose-950/20 hover:text-rose-200 transition cursor-pointer"
+            onClick={ouvrirDeconnexion}
+            title="Se déconnecter"
+            className="w-full flex items-center justify-center md:justify-start px-2 md:px-4 py-2.5 rounded-xl text-xs font-bold text-rose-300 hover:bg-rose-950/20 hover:text-rose-200 transition cursor-pointer"
           >
-            <ArrowLeftStartOnRectangleIcon className="w-4 h-4 mr-2" />
-            Se déconnecter
+            <ArrowLeftStartOnRectangleIcon className="w-4 h-4 mr-0 md:mr-2" />
+            <span className="sr-only md:not-sr-only">Se déconnecter</span>
           </button>
         </div>
       </aside>
@@ -267,16 +302,16 @@ export default function Acceuil() {
       {/* Zone de contenu central */}
       <main className="flex-1 h-full overflow-hidden bg-gray-50 flex flex-col">
         <header className="h-16 border-b border-gray-200/60 bg-white flex items-center justify-between px-8 shrink-0 shadow-sm shadow-gray-100/20">
-          <h1 className="font-bold text-gray-800 text-lg">
-            {page === "l" || page === "p" ? "Gestion du Stock" : page === "a" ? "Ajouter un Médicament" : page === "i" ? "Importation automatique" : page === "c" ? "Historique des Consultations" : page === "r" ? "Recherche Globale" : page === "h" ? "Informations de la pharmacie" : "Paramètres Pharmacie"}
-          </h1>
+          {page !== "pharmacie" && <h1 className="font-bold text-gray-800 text-lg">
+            {page === "l" || page === "p" ? "Gestion du Stock" : page === "a" ? "Ajouter un Médicament" : page === "i" ? "Importation automatique" : page === "c" ? "Historique des Consultations" : page === "r" ? "Recherche Globale" : "Paramètres Pharmacie"}
+          </h1>}
           <div className="text-xs text-gray-400 font-medium">
             Session active en tant que Pharmacie
           </div>
         </header>
 
         <div className="flex-1 min-h-0 overflow-y-auto p-8">
-          <div className={`max-w-6xl mx-auto ${page === "h" ? "min-h-full" : "h-full"}`}>
+          <div className={`max-w-6xl mx-auto ${page === "pharmacie" ? "min-h-full" : "h-full"}`}>
             {ComposantCentral}
           </div>
         </div>

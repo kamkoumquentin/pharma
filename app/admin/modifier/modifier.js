@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { 
   PencilIcon, 
-  PhotoIcon, 
   ArrowPathIcon,
   MapIcon 
 } from "@heroicons/react/24/solid";
@@ -18,30 +17,153 @@ const MedicalMapPinIcon = ({ className = "w-5 h-5" }) => (
   </svg>
 );
 
-export default function Modification({ info, token, onUpdate }) {
-  const [nom, setNom] = useState("");
-  const [ville, setVille] = useState("");
-  const [emplacement, setEmplacement] = useState("");
-  const [coordonnees, setCoordonnees] = useState({ lat: null, lng: null });
+export default function Modification({
+  info,
+  token,
+  onUpdate,
+  section,
+  embedded = false,
+  onTabStateChange,
+}) {
+  const [nom, setNom] = useState(info?.nom || "");
+  const [ville, setVille] = useState(info?.ville || "");
+  const [emplacement, setEmplacement] = useState(info?.emplacement || "");
+  const [coordonnees, setCoordonnees] = useState({
+    lat: info?.latitude ?? null,
+    lng: info?.longitude ?? null,
+  });
   const [photo, setPhoto] = useState(null);
   const [photoName, setPhotoName] = useState("");
-  const [photoPreview, setPhotoPreview] = useState("");
+  const [photoPreview, setPhotoPreview] = useState(info?.photo || "");
   const [loading, setLoading] = useState(false);
   const [gpsLoading, setGpsLoading] = useState(false);
   
   const fileInputRef = useRef(null);
   const showToast = useToast();
 
-  // Initialiser les champs avec les données actuelles
-  useEffect(() => {
-    if (info) {
-      setNom(info.nom || "");
-      setVille(info.ville || "");
-      setEmplacement(info.emplacement || "");
-      setCoordonnees({ lat: info.latitude || null, lng: info.longitude || null });
-      setPhotoPreview(info.photo || "");
-    }
+  const valeursInitiales = useMemo(() => ({
+    nom: info?.nom || "",
+    ville: info?.ville || "",
+    emplacement: info?.emplacement || "",
+    latitude: info?.latitude ?? null,
+    longitude: info?.longitude ?? null,
+    photo: info?.photo || "",
+  }), [info]);
+
+  const estModifie = Boolean(
+    nom !== valeursInitiales.nom ||
+    ville !== valeursInitiales.ville ||
+    emplacement !== valeursInitiales.emplacement ||
+    coordonnees.lat !== valeursInitiales.latitude ||
+    coordonnees.lng !== valeursInitiales.longitude ||
+    photo
+  );
+
+  const annuler = useCallback(() => {
+    setNom(info?.nom || "");
+    setVille(info?.ville || "");
+    setEmplacement(info?.emplacement || "");
+    setCoordonnees({ lat: info?.latitude ?? null, lng: info?.longitude ?? null });
+    setPhoto(null);
+    setPhotoName("");
+    setPhotoPreview(info?.photo || "");
   }, [info]);
+
+  const sauvegarder = useCallback(async () => {
+    if (!info?.id) {
+      return { success: false, error: "Identifiant de pharmacie introuvable." };
+    }
+    if (section === "general" && !nom.trim()) {
+      return { success: false, error: "Le nom de la pharmacie est obligatoire." };
+    }
+
+    setLoading(true);
+    try {
+      const modifications = section === "general"
+        ? { nom: nom.trim() }
+        : {
+            ville: ville.trim() || null,
+            emplacement: emplacement.trim(),
+          };
+      if (section === "adresse" && coordonnees.lat !== null) {
+        modifications.latitude = parseFloat(coordonnees.lat);
+      }
+      if (section === "adresse" && coordonnees.lng !== null) {
+        modifications.longitude = parseFloat(coordonnees.lng);
+      }
+
+      let erreurLogo = null;
+      if (section === "general" && photo) {
+        try {
+          const ext = photo.name.split(".").pop();
+          const filename = `logos/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
+          const { error: upErr } = await supabase.storage
+            .from("pharmacie-photos")
+            .upload(filename, photo);
+
+          if (upErr) {
+            erreurLogo = upErr.message || "le stockage a refusé l’envoi";
+          } else {
+            const { data: urlData } = supabase.storage
+              .from("pharmacie-photos")
+              .getPublicUrl(filename);
+            if (urlData?.publicUrl) modifications.photo = urlData.publicUrl;
+            else erreurLogo = "URL publique du logo indisponible";
+          }
+        } catch (storageErr) {
+          console.error("Erreur upload photo pharmacie:", storageErr);
+          erreurLogo = storageErr?.message || "erreur inattendue pendant l’envoi";
+        }
+      }
+
+      const { data: updatedData, error: updateErr } = await supabase
+        .from("pharmacies")
+        .update(modifications)
+        .eq("id", info.id)
+        .select()
+        .single();
+
+      if (updateErr) {
+        console.error("Échec de la mise à jour du profil pharmacie :", updateErr);
+        return {
+          success: false,
+          error: erreurLogo
+            ? `Le logo n’a pas pu être envoyé (${erreurLogo}) et aucune modification n’a été enregistrée.`
+            : updateErr.message || "Échec de l’enregistrement des modifications.",
+        };
+      }
+
+      onUpdate?.(updatedData);
+      if (section === "general" && !erreurLogo) {
+        setNom(updatedData.nom || "");
+        setPhoto(null);
+        setPhotoName("");
+        setPhotoPreview(updatedData.photo || "");
+      } else if (section === "general") {
+        setNom(updatedData.nom || "");
+      } else {
+        setVille(updatedData.ville || "");
+        setEmplacement(updatedData.emplacement || "");
+        setCoordonnees({
+          lat: updatedData.latitude ?? null,
+          lng: updatedData.longitude ?? null,
+        });
+      }
+      return {
+        success: true,
+        warning: erreurLogo ? `Le logo n’a pas pu être envoyé (${erreurLogo}).` : "",
+      };
+    } catch (error) {
+      console.error("Erreur lors de la sauvegarde :", error);
+      return { success: false, error: error?.message || "Erreur lors de la sauvegarde." };
+    } finally {
+      setLoading(false);
+    }
+  }, [coordonnees.lat, coordonnees.lng, emplacement, info, nom, onUpdate, photo, section, ville]);
+
+  useEffect(() => {
+    onTabStateChange?.(section, { dirty: estModifie, cancel: annuler, save: sauvegarder, loading });
+  }, [annuler, estModifie, loading, onTabStateChange, sauvegarder, section]);
 
   const changerPosition = () => {
     setGpsLoading(true);
@@ -68,103 +190,15 @@ export default function Modification({ info, token, onUpdate }) {
 
   const valider = async (e) => {
     e.preventDefault();
-    if (!info || !info.id) {
-      showToast("Erreur : Identifiant de pharmacie introuvable.", "error");
-      return;
+    const result = await sauvegarder();
+    if (!embedded) {
+      showToast(
+        result.success
+          ? result.warning || "Modifications enregistrées avec succès !"
+          : result.error,
+        result.success && !result.warning ? "success" : "error"
+      );
     }
-    
-    setLoading(true);
-    try {
-      const modifications = {
-        nom: nom.trim(),
-        ville: ville.trim() || null,
-        emplacement: emplacement.trim(),
-      };
-
-      if (coordonnees.lat !== null) modifications.latitude = parseFloat(coordonnees.lat);
-      if (coordonnees.lng !== null) modifications.longitude = parseFloat(coordonnees.lng);
-
-      let erreurLogo = null;
-      if (photo) {
-        try {
-          const ext = photo.name.split('.').pop();
-          const filename = `logos/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
-          const { error: upErr } = await supabase.storage
-            .from("pharmacie-photos")
-            .upload(filename, photo);
-
-          if (upErr) {
-            console.warn("Envoi du nouveau logo refusé par le stockage :", upErr);
-            erreurLogo = upErr.message || "le stockage a refusé l’envoi";
-          } else {
-            const { data: urlData } = supabase.storage
-              .from("pharmacie-photos")
-              .getPublicUrl(filename);
-            const url = urlData?.publicUrl || null;
-            if (!url) {
-              erreurLogo = "URL publique du logo indisponible";
-              console.warn("Aucune URL publique pour", filename);
-            } else {
-              modifications.photo = url;
-            }
-          }
-        } catch (storageErr) {
-          console.error("Erreur upload photo pharmacie:", storageErr);
-          erreurLogo = storageErr?.message || "erreur inattendue pendant l’envoi";
-        }
-      }
-
-      const { data: updatedData, error: updateErr } = await supabase
-        .from("pharmacies")
-        .update(modifications)
-        .eq("id", info.id)
-        .select()
-        .single();
-
-      // Aucun fichier n’est supprimé ici : un logo déjà en place peut être
-      // partagé, et le nouveau peut être repris par une autre ligne.
-      if (updateErr) {
-        console.error("Échec de la mise à jour du profil pharmacie :", updateErr);
-        showToast(
-          erreurLogo
-            ? `Le logo n’a pas pu être envoyé (${erreurLogo}) et aucune modification n’a été enregistrée.`
-            : "Échec de l’enregistrement des modifications.",
-          "error"
-        );
-        return;
-      }
-
-      if (onUpdate && updatedData) {
-        onUpdate(updatedData);
-      }
-
-      if (erreurLogo) {
-        showToast(
-          `Le logo n’a pas pu être envoyé (${erreurLogo}) : les autres modifications sont enregistrées.`,
-          "error"
-        );
-      } else {
-        showToast("Modifications enregistrées avec succès !", "success");
-      }
-    } catch (error) {
-      console.error("Erreur lors de la sauvegarde :", error);
-      showToast("Erreur lors de la sauvegarde des modifications.", "error");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const annuler = () => {
-    if (info) {
-      setNom(info.nom || "");
-      setVille(info.ville || "");
-      setEmplacement(info.emplacement || "");
-      setCoordonnees({ lat: info.latitude || null, lng: info.longitude || null });
-      setPhotoPreview(info.photo || "");
-    }
-    setPhoto(null);
-    setPhotoName("");
-    showToast("Modifications annulées.", "info");
   };
 
   const handleFileChange = (e) => {
@@ -177,9 +211,9 @@ export default function Modification({ info, token, onUpdate }) {
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto bg-white rounded-2xl border border-gray-200/60 shadow-sm p-8">
+    <div className="w-full max-w-2xl mx-auto bg-white rounded-2xl border border-gray-200/60 shadow-sm p-6">
       
-      <div className="flex items-center space-x-3 mb-6">
+      {!embedded && <div className="flex items-center space-x-3 mb-6">
         <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
           <PencilIcon className="w-5 h-5" />
         </div>
@@ -187,11 +221,11 @@ export default function Modification({ info, token, onUpdate }) {
           <h2 className="font-bold text-gray-800 text-lg">Paramètres Pharmacie</h2>
           <p className="text-xs text-gray-400">Modifiez les informations publiques de votre pharmacie</p>
         </div>
-      </div>
+      </div>}
 
-      <form onSubmit={valider} className="space-y-5">
+      <form onSubmit={valider} className="space-y-4">
         
-        {/* Nom */}
+        {section === "general" && <>
         <div className="flex flex-col space-y-1">
           <label className="text-xs font-semibold text-emerald-800 uppercase tracking-wide px-1">
             Nom de la pharmacie *
@@ -205,8 +239,36 @@ export default function Modification({ info, token, onUpdate }) {
             placeholder="Nouveau nom" 
           />
         </div>
+        <div className="flex flex-col space-y-1">
+          <label className="text-xs font-semibold text-emerald-800 uppercase tracking-wide px-1">
+            Logo de la pharmacie
+          </label>
+          <input
+            type="file"
+            accept="image/*"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            className="hidden"
+          />
+          <div className="flex items-center gap-4">
+            <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
+              {photoPreview
+                ? <img src={photoPreview} alt="Aperçu du logo" className="h-full w-full object-cover" />
+                : <div className="flex h-full items-center justify-center text-xs text-gray-400">Logo</div>}
+            </div>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="rounded-lg border border-emerald-200 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50"
+            >
+              Choisir un nouveau logo
+            </button>
+            {photoName && <span className="truncate text-xs text-gray-500">{photoName}</span>}
+          </div>
+        </div>
+        </>}
 
-        {/* Ville */}
+        {section === "adresse" && <>
         <div className="flex flex-col space-y-1">
           <label className="text-xs font-semibold text-emerald-800 uppercase tracking-wide px-1">
             Ville
@@ -226,7 +288,7 @@ export default function Modification({ info, token, onUpdate }) {
         {/* Emplacement */}
         <div className="flex flex-col space-y-1">
           <label className="text-xs font-semibold text-emerald-800 uppercase tracking-wide px-1">
-            Emplacement physique
+            Quartier
           </label>
           <div className="relative">
             <MedicalMapPinIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-600/70" />
@@ -238,53 +300,6 @@ export default function Modification({ info, token, onUpdate }) {
               placeholder="Ex: Face hôpital de district" 
             />
           </div>
-        </div>
-
-        {/* Logo / Image upload */}
-        <div className="flex flex-col space-y-1">
-          <label className="text-xs font-semibold text-emerald-800 uppercase tracking-wide px-1">
-            Modifier le logo / la photo
-          </label>
-          <input 
-            type="file" 
-            accept="image/*"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            className="hidden"
-          />
-          {photoPreview ? (
-            <div className="relative border border-gray-200 rounded-xl p-3 bg-gray-50 flex items-center space-x-4">
-              <div className="w-16 h-16 rounded-lg overflow-hidden border border-gray-200 bg-white flex-shrink-0 flex items-center justify-center">
-                <img src={photoPreview} alt="Aperçu logo" className="w-full h-full object-cover" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-gray-700 truncate">
-                  {photoName || "Logo actuel"}
-                </p>
-                <p className="text-[10px] text-gray-400">
-                  {photo ? "Nouvelle image sélectionnée" : "Image existante"}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="px-3 py-1.5 border border-gray-200 hover:bg-gray-100 text-gray-600 rounded-lg text-xs font-semibold cursor-pointer transition"
-              >
-                Changer
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="w-full h-11 border border-dashed border-gray-300 rounded-xl flex items-center justify-center space-x-2 text-xs text-gray-500 hover:border-emerald-500 hover:bg-emerald-50/10 transition cursor-pointer"
-            >
-              <PhotoIcon className="w-5 h-5 text-emerald-600" />
-              <span className="truncate max-w-[200px]">
-                Choisir un nouveau logo...
-              </span>
-            </button>
-          )}
         </div>
 
         {/* GPS Coordinates */}
@@ -308,9 +323,10 @@ export default function Modification({ info, token, onUpdate }) {
             Actualiser
           </button>
         </div>
+        </>}
 
         {/* Action Buttons */}
-        <div className="w-full border-t border-gray-100 pt-6 mt-6 flex justify-end gap-3">
+        {!embedded && <div className="w-full border-t border-gray-100 pt-6 mt-6 flex justify-end gap-3">
           <button 
             type="button"
             onClick={annuler}
@@ -325,7 +341,7 @@ export default function Modification({ info, token, onUpdate }) {
           >
             {loading ? "Enregistrement..." : "Valider les modifications"}
           </button>
-        </div>
+        </div>}
 
       </form>
     </div>
