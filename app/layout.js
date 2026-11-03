@@ -21,9 +21,9 @@ export default function RootLayout({ children }) {
   return (
     <html
       lang="fr"
-      className={`${roboto.variable} h-full antialiased`}
+      className={`${roboto.variable} h-full bg-gray-50 antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-gray-50/50">
+      <body className="min-h-full flex flex-col bg-gray-50">
         <ToastProvider>
           {children}
         </ToastProvider>
@@ -31,4 +31,3 @@ export default function RootLayout({ children }) {
     </html>
   );
 }
-

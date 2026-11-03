@@ -8,7 +8,8 @@ import {
   ArrowLeftStartOnRectangleIcon, 
   DocumentTextIcon,
   UsersIcon,
-  MagnifyingGlassIcon
+  MagnifyingGlassIcon,
+  CalendarDaysIcon,
 } from "@heroicons/react/24/solid";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -18,6 +19,7 @@ import Ajouter from "./ajouter/ajouter";
 import ImportationStock from "./import/import";
 import Consultations from "./consultations/consultations";
 import RechercheGlobale from "./recherche/recherche";
+import InformationsPharmacie from "./informations/informations";
 import { supabase } from "@/app/lib/supabaseClient";
 import { useToast } from "@/app/components/Toast";
 
@@ -131,12 +133,13 @@ export default function Acceuil() {
     { id: "i", label: "Importation automatique", icon: DocumentTextIcon },
     { id: "c", label: "Consultations", icon: UsersIcon },
     { id: "r", label: "Rechercher un produit", icon: MagnifyingGlassIcon },
+    { id: "h", label: "Informations pharmacie", icon: CalendarDaysIcon },
     { id: "m", label: "Modifier les infos", icon: PencilIcon },
   ];
 
   if (loadingProfile) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-gray-50 flex-col gap-4">
+      <div className="flex h-dvh w-full items-center justify-center bg-gray-50 flex-col gap-4">
         <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
         <p className="text-sm font-semibold text-emerald-900 animate-pulse">
           Vérification de votre compte pharmacie...
@@ -185,10 +188,17 @@ export default function Acceuil() {
     ComposantCentral = <Consultations pharmacieId={info.id} token={token} ville={info.ville} />;
   } else if (page === "r") {
     ComposantCentral = <RechercheGlobale pharmacieId={info.id} token={token} />;
+  } else if (page === "h") {
+    ComposantCentral = (
+      <InformationsPharmacie
+        info={info}
+        onUpdate={(newProfile) => setinfo(newProfile)}
+      />
+    );
   }
 
   return (
-    <div className="flex w-screen h-screen bg-gray-50/50 overflow-hidden font-sans">
+    <div className="fixed inset-0 flex h-dvh w-full shrink-0 bg-gray-50/50 overflow-hidden font-sans">
       
       {/* Sidebar latérale */}
       <aside className="w-80 h-full bg-emerald-950 text-white flex flex-col border-r border-emerald-900/50 shrink-0">
@@ -218,7 +228,7 @@ export default function Acceuil() {
         </div>
 
         {/* Menu Navigation */}
-        <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
+        <nav className="flex-1 min-h-0 px-4 py-6 space-y-1.5 overflow-hidden">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = page === item.id || (item.id === "l" && page === "p");
@@ -258,15 +268,15 @@ export default function Acceuil() {
       <main className="flex-1 h-full overflow-hidden bg-gray-50 flex flex-col">
         <header className="h-16 border-b border-gray-200/60 bg-white flex items-center justify-between px-8 shrink-0 shadow-sm shadow-gray-100/20">
           <h1 className="font-bold text-gray-800 text-lg">
-            {page === "l" || page === "p" ? "Gestion du Stock" : page === "a" ? "Ajouter un Médicament" : page === "i" ? "Importation automatique" : page === "c" ? "Historique des Consultations" : page === "r" ? "Recherche Globale" : "Paramètres Pharmacie"}
+            {page === "l" || page === "p" ? "Gestion du Stock" : page === "a" ? "Ajouter un Médicament" : page === "i" ? "Importation automatique" : page === "c" ? "Historique des Consultations" : page === "r" ? "Recherche Globale" : page === "h" ? "Informations de la pharmacie" : "Paramètres Pharmacie"}
           </h1>
           <div className="text-xs text-gray-400 font-medium">
             Session active en tant que Pharmacie
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-8">
-          <div className="max-w-6xl mx-auto h-full">
+        <div className="flex-1 min-h-0 overflow-y-auto p-8">
+          <div className={`max-w-6xl mx-auto ${page === "h" ? "min-h-full" : "h-full"}`}>
             {ComposantCentral}
           </div>
         </div>
