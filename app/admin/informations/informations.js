@@ -7,6 +7,10 @@ import {
   TrashIcon,
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
+import {
+  ERREUR_TELEPHONE_PHARMACIE,
+  normaliserEtValiderTelephonePharmacie,
+} from "@/app/lib/telephonePharmacie";
 import { useToast } from "@/app/components/Toast";
 
 const JOURS = [
@@ -273,14 +277,13 @@ export default function InformationsPharmacie({
   }, [appliquerDonnees, lireDonnees]);
 
   const sauvegarderTelephone = useCallback(async () => {
-    const telephoneNormalise = telephone.replace(/[\s()-]/g, "");
-    if (!/^\+237[62]\d{8}$/.test(telephoneNormalise)) {
-      setTelephoneErreur(
-        "Saisissez un numéro camerounais au format +237 suivi de 9 chiffres, commençant par 6 ou 2."
-      );
+    const resultatTelephone = normaliserEtValiderTelephonePharmacie(telephone);
+    if (!resultatTelephone.valide) {
+      setTelephone(telephoneEnregistre);
+      setTelephoneErreur(ERREUR_TELEPHONE_PHARMACIE);
       return {
         success: false,
-        error: "Saisissez un numéro camerounais au format +237 suivi de 9 chiffres, commençant par 6 ou 2.",
+        error: ERREUR_TELEPHONE_PHARMACIE,
       };
     }
 
@@ -288,7 +291,7 @@ export default function InformationsPharmacie({
     setEnregistrementTelephone(true);
     const { data, error } = await supabase
       .from("pharmacies")
-      .update({ telephone: telephoneNormalise })
+      .update({ telephone: resultatTelephone.telephone })
       .eq("id", info.id)
       .select()
       .single();
@@ -298,11 +301,11 @@ export default function InformationsPharmacie({
       console.error("Erreur d'enregistrement du téléphone :", error);
       return { success: false, error: detailErreur(error) };
     }
-    setTelephone(data.telephone || telephoneNormalise);
-    setTelephoneEnregistre(data.telephone || telephoneNormalise);
+    setTelephone(data.telephone || resultatTelephone.telephone);
+    setTelephoneEnregistre(data.telephone || resultatTelephone.telephone);
     onUpdate?.(data);
     return { success: true };
-  }, [info.id, onUpdate, telephone]);
+  }, [info.id, onUpdate, telephone, telephoneEnregistre]);
 
   const enregistrerTelephone = async (event) => {
     event.preventDefault();
@@ -715,7 +718,7 @@ export default function InformationsPharmacie({
       <section className="rounded-2xl border border-gray-200/60 bg-white p-6 shadow-sm">
         <form onSubmit={enregistrerTelephone}>
           <label htmlFor="telephone-pharmacie">
-            {champClasse("Téléphone de la pharmacie")}
+            {champClasse("Téléphone de la pharmacie *")}
           </label>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <input
@@ -740,7 +743,7 @@ export default function InformationsPharmacie({
             </p>
           )}
           <p className="mt-2 text-xs text-gray-500">
-            Format requis : +237 suivi de 9 chiffres, commençant par 6 ou 2.
+            Ce numéro est visible par les patients (appel et WhatsApp). Utilisez le numéro de la pharmacie. Un numéro mobile, commençant par 6, permet aussi de recevoir des messages WhatsApp.
           </p>
         </form>
       </section>
