@@ -11,24 +11,9 @@ import {
   XMarkIcon
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
+import { construireNomFichierImage } from "@/app/lib/nomFichierImage.mjs";
 import { assurerMedicament } from "@/app/lib/medicaments";
 import { useToast } from "@/app/components/Toast";
-
-// Retire du stockage la photo d'une offre qui n'a pas pu être enregistrée.
-// Le chemin n'est passé qu'après un téléversement réussi : une URL reprise
-// d'une autre offre n'est jamais supprimée ici.
-// remove() peut répondre sans erreur et ne rapporter aucun fichier : une
-// politique de stockage ou un chemin inconnu laissent alors l'image en place,
-// ce que « data » est seul à révéler.
-async function supprimerImageTeleversee(chemin) {
-  if (!chemin || !chemin.startsWith("produits/")) return;
-  const { data, error } = await supabase.storage.from("offres-images").remove([chemin]);
-  if (error) {
-    console.warn("Suppression de l'image téléversée impossible :", chemin, error);
-  } else if (!data || data.length === 0) {
-    console.warn("Aucun fichier supprimé (policy ou chemin) :", chemin);
-  }
-}
 
 export default function Ajouter({ pharmacieId, token, onAddSuccess, onModifierOffre }) {
   const [medsList, setMedsList] = useState([]);
@@ -50,6 +35,7 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess, onModifierOf
   const [loading, setLoading] = useState(false);
   const [offreDoublon, setOffreDoublon] = useState(null);
   const fileInputRef = useRef(null);
+  const nomMedicamentSelectionne = medsList.find((medicament) => medicament.id === selectedMed)?.nom || "";
 
   const showToast = useToast();
 
@@ -200,7 +186,6 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess, onModifierOf
     }
 
     setLoading(true);
-    let imageTeleversee = null;
     try {
       setOffreDoublon(null);
       let idMedicament = selectedMed;
@@ -241,24 +226,42 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess, onModifierOf
 
       let imageUrl = selectedExistingImage;
       if (image) {
-        const ext = image.name.split('.').pop();
-        imageTeleversee = `produits/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
-        const { error: uploadErr } = await supabase.storage
-          .from("offres-images")
-          .upload(imageTeleversee, image);
-
-        if (uploadErr) {
-          imageTeleversee = null;
-          console.error("Erreur lors du téléversement de l'image :", uploadErr);
-          showToast("Impossible de téléverser l’image. L’offre n’a pas été enregistrée.", "error");
-          return;
+        const extension = image.name.split(".").pop()?.toLowerCase() || "bin";
+        const cryptoSubtle = globalThis.crypto?.subtle;
+        let cheminImage;
+        if (typeof cryptoSubtle?.digest === "function") {
+          const octets = await image.arrayBuffer();
+          const digest = await cryptoSubtle.digest("SHA-256", octets);
+          const empreinte = Array.from(new Uint8Array(digest), (octet) =>
+            octet.toString(16).padStart(2, "0")
+          ).join("");
+          cheminImage = construireNomFichierImage(empreinte, extension);
+        } else {
+          cheminImage = construireNomFichierImage(
+            `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+            extension
+          );
         }
 
-        const { data: urlData } = supabase.storage.from("offres-images").getPublicUrl(imageTeleversee);
+        const { error: uploadErr } = await supabase.storage
+          .from("offres-images")
+          .upload(cheminImage, image);
+
+        if (uploadErr) {
+          const imageDejaPresente =
+            String(uploadErr.statusCode) === "409" &&
+            uploadErr.status === 400 &&
+            /the resource already exists/i.test(uploadErr.message || "");
+          if (!imageDejaPresente) {
+            console.error("Erreur lors du téléversement de l'image :", uploadErr);
+            showToast("Impossible de téléverser l’image. L’offre n’a pas été enregistrée.", "error");
+            return;
+          }
+        }
+
+        const { data: urlData } = supabase.storage.from("offres-images").getPublicUrl(cheminImage);
         imageUrl = urlData?.publicUrl || "";
         if (!imageUrl) {
-          await supprimerImageTeleversee(imageTeleversee);
-          imageTeleversee = null;
           showToast("Impossible de récupérer l’URL de l’image. L’offre n’a pas été enregistrée.", "error");
           return;
         }
@@ -288,8 +291,6 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess, onModifierOf
             .maybeSingle();
 
           if (relureErr) throw relureErr;
-          await supprimerImageTeleversee(imageTeleversee);
-          imageTeleversee = null;
           setOffreDoublon({ ...(relue || {}), idMedicament, nom: nomMedicament });
           return;
         }
@@ -304,9 +305,6 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess, onModifierOf
         onAddSuccess();
       }
     } catch (error) {
-      // L'offre n'a pas été enregistrée : la photo téléversée ne doit pas
-      // rester orpheline dans le stockage.
-      if (imageTeleversee) await supprimerImageTeleversee(imageTeleversee);
       console.error("Erreur d'ajout de l'offre :", error);
       showToast(error.message || "Erreur lors de l'ajout du médicament au stock.", "error");
     } finally {
@@ -508,6 +506,11 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess, onModifierOf
                     >
                       {selectedExistingImage === url ? "Sélectionnée" : "Sélectionner"}
                     </button>
+                    {nomMedicamentSelectionne && (
+                      <span className="max-w-24 truncate text-[10px] text-gray-500" title={nomMedicamentSelectionne}>
+                        {nomMedicamentSelectionne}
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>

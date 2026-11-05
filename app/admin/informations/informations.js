@@ -864,6 +864,7 @@ export default function InformationsPharmacie({
                 })}
                 {jour.ouvert && <button
                   type="button"
+                  aria-label="Ajouter une plage"
                   onClick={() =>
                     setHoraires((precedents) =>
                       precedents.map((ligne) =>
@@ -876,7 +877,6 @@ export default function InformationsPharmacie({
                   className="inline-flex items-center gap-1 py-1 text-xs font-semibold text-emerald-700 hover:text-emerald-900"
                 >
                   <PlusIcon className="h-4 w-4" />
-                  +
                 </button>}
               </div>
             </div>

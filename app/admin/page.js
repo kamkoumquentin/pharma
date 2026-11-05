@@ -19,6 +19,7 @@ import Consultations from "./consultations/consultations";
 import RechercheGlobale from "./recherche/recherche";
 import MaPharmacie from "./ma-pharmacie";
 import { supabase } from "@/app/lib/supabaseClient";
+import { formaterNomPharmacie } from "@/app/lib/formatNomPharmacie.mjs";
 import { useToast } from "@/app/components/Toast";
 
 const MedicalMapPinIcon = ({ className = "w-5 h-5" }) => (
@@ -28,14 +29,6 @@ const MedicalMapPinIcon = ({ className = "w-5 h-5" }) => (
     <path d="M11 6.5h2v5h-2z" fill="white" />
   </svg>
 );
-
-function capitaliserMots(value) {
-  return String(value || "")
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((mot) => `${mot.charAt(0).toLocaleUpperCase("fr-FR")}${mot.slice(1).toLocaleLowerCase("fr-FR")}`)
-    .join(" ");
-}
 
 export default function Acceuil() {
   const [page, setpage] = useState("l");
@@ -246,16 +239,16 @@ export default function Acceuil() {
             )}
           </div>
           <h2 className="hidden md:block font-bold text-center text-lg leading-tight truncate w-full text-emerald-50">
-            {capitaliserMots(info.nom) || "Chargement..."}
+            {formaterNomPharmacie(info.nom) || "Chargement..."}
           </h2>
           <p className="hidden md:flex text-xs text-emerald-300/80 items-center justify-center gap-1 mt-1.5 truncate w-full">
             <MedicalMapPinIcon className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
             <span className="truncate">
               {info.ville
                 ? (info.emplacement
-                  ? `${capitaliserMots(info.ville)} • ${capitaliserMots(info.emplacement)}`
-                  : capitaliserMots(info.ville))
-                : (capitaliserMots(info.emplacement) || "Non spécifié")}
+                  ? `${formaterNomPharmacie(info.ville)} • ${formaterNomPharmacie(info.emplacement)}`
+                  : formaterNomPharmacie(info.ville))
+                : (formaterNomPharmacie(info.emplacement) || "Non spécifié")}
             </span>
           </p>
         </div>
