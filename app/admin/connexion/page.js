@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { EnvelopeIcon, LockClosedIcon, BuildingStorefrontIcon, EyeIcon, EyeSlashIcon } from "@heroicons/react/24/solid";
+import { EnvelopeIcon, LockClosedIcon, EyeIcon, EyeSlashIcon } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
 import { useToast } from "@/app/components/Toast";
 import OtpModal from "@/app/components/OtpModal";
@@ -96,12 +97,17 @@ export default function Connexion() {
         
         {/* Logo / Header */}
         <div className="flex flex-col items-center space-y-3 mb-8 w-full text-center">
-          <div className="w-16 h-16 bg-gradient-to-tr from-emerald-500 to-teal-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-200">
-            <BuildingStorefrontIcon className="w-9 h-9 text-white" />
-          </div>
+          <Image
+            src="/medipharmac-logo.png"
+            alt="Logo Medipharmac"
+            width={1297}
+            height={1213}
+            priority
+            className="h-28 w-28 object-contain"
+          />
           <div>
             <h1 className="font-roboto font-bold text-2xl bg-gradient-to-r from-emerald-800 to-teal-900 bg-clip-text text-transparent uppercase tracking-wider">
-              pharma Admin
+              Medipharmac
             </h1>
             <p className="text-gray-500 text-sm mt-1">
               Connectez-vous à votre espace pharmacie

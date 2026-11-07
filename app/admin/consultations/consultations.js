@@ -110,7 +110,7 @@ export default function Consultations({ pharmacieId, token, ville }) {
         <div className="p-12 text-center text-gray-500">
           <p className="font-medium text-gray-700 mb-1">Aucune consultation enregistrée</p>
           <p className="text-xs text-gray-400">
-            Aucun médicament n’a encore été consulté pour les pharmacies de {nomVille} sur MediSkip.
+            Aucun médicament n’a encore été consulté pour les pharmacies de {nomVille} sur Medipharmac.
           </p>
         </div>
       ) : (

@@ -9,11 +9,15 @@ const roboto = Roboto({
 });
 
 export const metadata = {
-  title: "administration Pharmacie",
-  description: "Interface d'administration pour la gestion de boutique",
+  title: "Medipharmac | Administration pharmacie",
+  description: "Interface d'administration Medipharmac pour les pharmacies",
   icons: {
-    icon: "/icon.png",
-    apple: "/apple-icon.png",
+    icon: [
+      { url: "/icon.png?v=20261107", type: "image/png" },
+      { url: "/favicon.ico?v=20261107", type: "image/x-icon" },
+    ],
+    shortcut: "/favicon.ico?v=20261107",
+    apple: "/apple-icon.png?v=20261107",
   },
 };
 
