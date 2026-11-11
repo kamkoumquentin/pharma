@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowPathIcon, PaperAirplaneIcon } from "@heroicons/react/24/outline";
 import { supabase } from "@/app/lib/supabaseClient";
 
@@ -26,7 +26,7 @@ export default function Messages({
   const [envoi, setEnvoi] = useState(false);
   const filRef = useRef(null);
   const derniersMarquesRef = useRef(new Set());
-  const conversationId = conversation?.id;
+  const conversationId = conversation && conversation.id ? conversation.id : null;
 
   const chargerMessages = useCallback(async () => {
     setErreur(false);
@@ -58,11 +58,11 @@ export default function Messages({
     Promise.resolve().then(chargerMessages);
   }, [chargerMessages]);
 
-  const messagesAffiches = useMemo(() => {
-    const reunis = new Map(messages.map((message) => [message.id, message]));
-    if (messageRecu?.conversation_id === conversationId) reunis.set(messageRecu.id, messageRecu);
-    return [...reunis.values()].sort((a, b) => new Date(a.cree_le) - new Date(b.cree_le));
-  }, [messages, messageRecu, conversationId]);
+  const reunis = new Map(messages.map((message) => [message.id, message]));
+  if (messageRecu?.conversation_id === conversationId) reunis.set(messageRecu.id, messageRecu);
+  const messagesAffiches = [...reunis.values()].sort(
+    (a, b) => new Date(a.cree_le) - new Date(b.cree_le)
+  );
 
   const marquerLues = useCallback(async (conversationId) => {
     if (!conversationId || derniersMarquesRef.current.has(conversationId)) return;
@@ -79,15 +79,15 @@ export default function Messages({
   }, []);
 
   useEffect(() => {
-    if (!conversation?.id) return;
-    marquerLues(conversation.id);
-  }, [conversation?.id, marquerLues]);
+    if (!conversationId) return;
+    marquerLues(conversationId);
+  }, [conversationId, marquerLues]);
 
   useEffect(() => {
-    if (!messageRecu || messageRecu.auteur_role !== "admin" || messageRecu.conversation_id !== conversation?.id) return;
-    derniersMarquesRef.current.delete(conversation.id);
-    marquerLues(conversation.id);
-  }, [messageRecu, conversation?.id, marquerLues]);
+    if (!messageRecu || messageRecu.auteur_role !== "admin" || messageRecu.conversation_id !== conversationId) return;
+    derniersMarquesRef.current.delete(conversationId);
+    marquerLues(conversationId);
+  }, [messageRecu, conversationId, marquerLues]);
 
   useEffect(() => {
     if (filRef.current) filRef.current.scrollTop = filRef.current.scrollHeight;
@@ -99,21 +99,21 @@ export default function Messages({
 
     setEnvoi(true);
     try {
-      let conversationId = conversation?.id;
-      if (!conversationId) {
+      let idConversation = conversationId;
+      if (!idConversation) {
         const { data, error } = await supabase.rpc("ouvrir_conversation", {
           p_pharmacie_id: pharmacieId,
         });
         if (error) throw error;
         const nouvelleConversation = Array.isArray(data) ? data[0] : data;
-        conversationId = nouvelleConversation?.id;
-        if (!conversationId) throw new Error("La création de la conversation n'a retourné aucun identifiant.");
+        idConversation = nouvelleConversation?.id;
+        if (!idConversation) throw new Error("La création de la conversation n'a retourné aucun identifiant.");
         await recharger();
       }
 
       const { data, error } = await supabase
         .from("messages")
-        .insert({ conversation_id: conversationId, contenu: texte })
+        .insert({ conversation_id: idConversation, contenu: texte })
         .select("id, conversation_id, auteur_role, contenu, cree_le")
         .single();
 
