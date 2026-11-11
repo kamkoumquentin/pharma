@@ -120,7 +120,7 @@ export default function Modification({
         .from("pharmacies")
         .update(modifications)
         .eq("id", info.id)
-        .select()
+        .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude")
         .single();
 
       if (updateErr) {

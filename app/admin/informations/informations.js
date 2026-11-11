@@ -293,7 +293,7 @@ export default function InformationsPharmacie({
       .from("pharmacies")
       .update({ telephone: resultatTelephone.telephone })
       .eq("id", info.id)
-      .select()
+      .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude")
       .single();
     setEnregistrementTelephone(false);
 

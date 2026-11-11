@@ -74,8 +74,8 @@ export default function Acceuil() {
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           const res = await supabase
             .from("pharmacies")
-            .select("*")
-            .eq("password", user.id)
+            .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude, statut")
+            .eq("owner_id", user.id)
             .maybeSingle();
 
           profile = res.data;
@@ -302,6 +302,24 @@ export default function Acceuil() {
             Session active en tant que Pharmacie
           </div>
         </header>
+
+        {info.statut === "en_attente" && (
+          <div
+            role="status"
+            className="shrink-0 border-b border-amber-200 bg-amber-50 px-8 py-3 text-sm font-medium text-amber-900"
+          >
+            Votre inscription est en cours de validation. Votre pharmacie n&apos;apparaît pas encore dans Mediskip.
+          </div>
+        )}
+
+        {info.statut === "suspendu" && (
+          <div
+            role="alert"
+            className="shrink-0 border-b border-rose-200 bg-rose-50 px-8 py-3 text-sm font-medium text-rose-900"
+          >
+            Votre pharmacie est suspendue et n&apos;apparaît pas dans Mediskip. Contactez le support.
+          </div>
+        )}
 
         <div className="flex-1 min-h-0 overflow-y-auto p-8">
           <div className={`max-w-6xl mx-auto ${page === "pharmacie" ? "min-h-full" : "h-full"}`}>

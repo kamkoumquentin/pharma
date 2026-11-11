@@ -97,17 +97,16 @@ export default function Inscription() {
         .insert({
           ...compte.pharmacie,
           owner_id: compte.id,
-          password: compte.id,
           photo: null,
         })
-        .select()
+        .select("id")
         .single();
 
       let profil = data;
       if (error?.code === "23505") {
         const { data: profilExistant } = await supabase
           .from("pharmacies")
-          .select()
+          .select("id")
           .eq("owner_id", compte.id)
           .maybeSingle();
         profil = profilExistant;
@@ -152,7 +151,7 @@ export default function Inscription() {
         .update({ photo: url })
         .eq("id", profil.id)
         .eq("owner_id", compte.id)
-        .select()
+        .select("id")
         .single();
 
       if (error || !data) {
@@ -212,7 +211,7 @@ export default function Inscription() {
             .update({ photo: logoEnAttente.url })
             .eq("id", logoEnAttente.profil.id)
             .eq("owner_id", compte.id)
-            .select()
+            .select("id")
             .single();
 
           if (error || !data) {

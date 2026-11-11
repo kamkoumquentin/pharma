@@ -63,8 +63,8 @@ export default function Connexion() {
         if (authData?.user) {
           const { data: profile, error: profError } = await supabase
             .from("pharmacies")
-            .select("*")
-            .eq("password", authData.user.id)
+            .select("id")
+            .eq("owner_id", authData.user.id)
             .maybeSingle();
 
           if (profError || !profile) {
