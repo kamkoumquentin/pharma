@@ -10,6 +10,7 @@ import {
   MagnifyingGlassIcon,
   CalendarDaysIcon,
 } from "@heroicons/react/24/solid";
+import { ChatBubbleLeftRightIcon } from "@heroicons/react/24/outline";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Centrale from "./contenu";
@@ -18,7 +19,9 @@ import ImportationStock from "./import/import";
 import Consultations from "./consultations/consultations";
 import RechercheGlobale from "./recherche/recherche";
 import MaPharmacie from "./ma-pharmacie";
+import Messages from "./messages/messages";
 import { supabase } from "@/app/lib/supabaseClient";
+import { useMessagerie } from "@/app/lib/messagerie";
 import { formaterNomPharmacie } from "@/app/lib/formatNomPharmacie.mjs";
 import { useToast } from "@/app/components/Toast";
 
@@ -41,6 +44,7 @@ export default function Acceuil() {
   const annulerModificationsRef = useRef(null);
   const nav = useRouter();
   const showToast = useToast();
+  const messagerie = useMessagerie(info.id, page === "m");
 
   useEffect(() => {
     if (!isLogoutConfirmOpen) return;
@@ -164,6 +168,7 @@ export default function Acceuil() {
     { id: "a", label: "Ajouter un médicament", icon: PlusCircleIcon },
     { id: "i", label: "Importation automatique", icon: DocumentTextIcon },
     { id: "c", label: "Consultations", icon: UsersIcon },
+    { id: "m", label: "Messages", icon: ChatBubbleLeftRightIcon },
     { id: "r", label: "Rechercher un produit", icon: MagnifyingGlassIcon },
     { id: "pharmacie", label: "Ma pharmacie", icon: CalendarDaysIcon },
   ];
@@ -207,6 +212,17 @@ export default function Acceuil() {
     ComposantCentral = <ImportationStock pharmacieId={info.id} onImportSuccess={() => naviger("l")} />;
   } else if (page === "c") {
     ComposantCentral = <Consultations pharmacieId={info.id} token={token} ville={info.ville} />;
+  } else if (page === "m") {
+    ComposantCentral = (
+      <Messages
+        pharmacieId={info.id}
+        conversation={messagerie.conversation}
+        messageRecu={messagerie.messageRecu}
+        recharger={messagerie.recharger}
+        chargementConversation={messagerie.chargement}
+        erreurConversation={messagerie.erreur}
+      />
+    );
   } else if (page === "r") {
     ComposantCentral = <RechercheGlobale pharmacieId={info.id} token={token} />;
   } else if (page === "pharmacie") {
@@ -263,7 +279,7 @@ export default function Acceuil() {
                 key={item.id}
                 onClick={() => naviger(item.id)}
                 title={item.label}
-                className={`w-full flex items-center justify-center md:justify-start px-2 md:px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-200 cursor-pointer group ${
+                className={`relative w-full flex items-center justify-center md:justify-start px-2 md:px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-200 cursor-pointer group ${
                   isActive
                     ? "bg-emerald-800 text-white shadow-md shadow-emerald-950/40"
                     : "text-emerald-100/70 hover:bg-emerald-900/40 hover:text-white"
@@ -273,6 +289,14 @@ export default function Acceuil() {
                   isActive ? "text-emerald-300" : "text-emerald-300/50 group-hover:text-emerald-300"
                 }`} />
                 <span className="sr-only md:not-sr-only">{item.label}</span>
+                {item.id === "m" && messagerie.nonLus > 0 && (
+                  <span
+                    aria-label={`${messagerie.nonLus} message${messagerie.nonLus > 1 ? "s" : ""} non lu${messagerie.nonLus > 1 ? "s" : ""}`}
+                    className="absolute right-1 top-1 min-w-4 rounded-full bg-rose-500 px-1 text-center text-[9px] font-bold leading-4 text-white md:static md:ml-auto md:min-w-5 md:px-1.5 md:text-[10px]"
+                  >
+                    {messagerie.nonLus}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -296,7 +320,7 @@ export default function Acceuil() {
       <main className="flex-1 h-full overflow-hidden bg-gray-50 flex flex-col">
         <header className="h-16 border-b border-gray-200/60 bg-white flex items-center justify-between px-8 shrink-0 shadow-sm shadow-gray-100/20">
           {page !== "pharmacie" && <h1 className="font-bold text-gray-800 text-lg">
-            {page === "l" || page === "p" ? "Gestion du Stock" : page === "a" ? "Ajouter un Médicament" : page === "i" ? "Importation automatique" : page === "c" ? "Historique des Consultations" : page === "r" ? "Recherche Globale" : "Paramètres Pharmacie"}
+            {page === "l" || page === "p" ? "Gestion du Stock" : page === "a" ? "Ajouter un Médicament" : page === "i" ? "Importation automatique" : page === "c" ? "Historique des Consultations" : page === "m" ? "Messages" : page === "r" ? "Recherche Globale" : "Paramètres Pharmacie"}
           </h1>}
           <div className="text-xs text-gray-400 font-medium">
             Session active en tant que Pharmacie
