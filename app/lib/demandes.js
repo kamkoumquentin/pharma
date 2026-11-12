@@ -5,8 +5,8 @@ import { supabase } from "@/app/lib/supabaseClient";
 import { useToast } from "@/app/components/Toast";
 
 const trierDiscussions = (discussions) => [...discussions].sort((a, b) => {
-  const dateA = new Date(a.dernier_message_at || a.cree_le || 0).getTime();
-  const dateB = new Date(b.dernier_message_at || b.cree_le || 0).getTime();
+  const dateA = new Date(a.dernier_message_at || 0).getTime();
+  const dateB = new Date(b.dernier_message_at || 0).getTime();
   return dateB - dateA;
 });
 
@@ -15,13 +15,15 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState(false);
   const [erreurCanal, setErreurCanal] = useState(false);
-  const [versionMessages, setVersionMessages] = useState(0);
-  const [versionCanal, setVersionCanal] = useState(0);
+  const [messagesEnTempsReel, setMessagesEnTempsReel] = useState([]);
   const showToast = useToast();
   const sectionOuverteRef = useRef(sectionOuverte);
   const discussionOuverteRef = useRef(discussionOuverteId);
   const titreInitialRef = useRef(null);
-  const idsDiscussionsRef = useRef(new Set());
+  const discussionsRef = useRef([]);
+  const revisionsRealtimeRef = useRef(0);
+  const lignesRealtimeRef = useRef(new Map());
+  const marquagesEnCoursRef = useRef(new Set());
 
   useEffect(() => {
     sectionOuverteRef.current = sectionOuverte;
@@ -33,51 +35,43 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
 
   const charger = useCallback(async () => {
     if (!pharmacieId) {
-      idsDiscussionsRef.current = new Set();
+      discussionsRef.current = [];
       setDiscussions([]);
       setChargement(false);
       setErreur(false);
       return;
     }
 
+    const revisionAuDepart = revisionsRealtimeRef.current;
     setChargement(true);
     setErreur(false);
 
     try {
       const { data, error: erreurDiscussions } = await supabase
         .from("discussions")
-        .select("id, utilisateur_id, pharmacie_id, dernier_message_at, non_lus_client, non_lus_pharmacie, cree_le")
+        .select("id, utilisateur_id, pharmacie_id, dernier_message_at, dernier_extrait, dernier_auteur_role, non_lus_client, non_lus_pharmacie, cree_le")
         .eq("pharmacie_id", pharmacieId)
-        .order("dernier_message_at", { ascending: false, nullsFirst: false });
+        .order("dernier_message_at", { ascending: false, nullsFirst: false })
+        .limit(50);
 
       if (erreurDiscussions) throw erreurDiscussions;
 
-      const lignes = data || [];
-      idsDiscussionsRef.current = new Set(lignes.map((discussion) => discussion.id));
-      let dernierMessageParDiscussion = new Map();
-
-      if (lignes.length > 0) {
-        const ids = lignes.map((discussion) => discussion.id);
-        const { data: messages, error: erreurMessages } = await supabase
-          .from("discussion_messages")
-          .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le")
-          .in("discussion_id", ids)
-          .order("cree_le", { ascending: false });
-
-        if (erreurMessages) throw erreurMessages;
-
-        dernierMessageParDiscussion = new Map();
-        for (const message of messages || []) {
-          if (!dernierMessageParDiscussion.has(message.discussion_id)) {
-            dernierMessageParDiscussion.set(message.discussion_id, message);
-          }
+      const discussionsChargees = (data || []).map((discussion) => {
+        const ligneRealtime = lignesRealtimeRef.current.get(discussion.id);
+        return ligneRealtime?.revision > revisionAuDepart
+          ? { ...discussion, ...ligneRealtime.discussion }
+          : discussion;
+      });
+      const idsChargees = new Set(discussionsChargees.map((discussion) => discussion.id));
+      for (const [id, ligneRealtime] of lignesRealtimeRef.current) {
+        if (ligneRealtime.revision > revisionAuDepart && !idsChargees.has(id)) {
+          discussionsChargees.push(ligneRealtime.discussion);
         }
       }
 
-      setDiscussions(trierDiscussions(lignes.map((discussion) => ({
-        ...discussion,
-        dernierMessage: dernierMessageParDiscussion.get(discussion.id) || null,
-      }))));
+      const prochainesDiscussions = trierDiscussions(discussionsChargees).slice(0, 50);
+      discussionsRef.current = prochainesDiscussions;
+      setDiscussions(prochainesDiscussions);
     } catch (error) {
       console.error("Erreur lors du chargement des demandes clients :", error);
       setErreur(true);
@@ -88,12 +82,16 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
 
   const actualiser = useCallback(async () => {
     setErreurCanal(false);
-    setVersionCanal((version) => version + 1);
     await charger();
   }, [charger]);
 
   const marquerLues = useCallback(async (discussionId) => {
-    if (!discussionId) return;
+    const discussion = discussionsRef.current.find((item) => item.id === discussionId);
+    if (!discussionId || !discussion?.non_lus_pharmacie || marquagesEnCoursRef.current.has(discussionId)) {
+      return;
+    }
+
+    marquagesEnCoursRef.current.add(discussionId);
 
     try {
       const { error } = await supabase.rpc("marquer_lues_discussion", {
@@ -102,13 +100,15 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
 
       if (error) throw error;
 
-      setDiscussions((precedentes) => precedentes.map((discussion) => (
-        discussion.id === discussionId
-          ? { ...discussion, non_lus_pharmacie: 0 }
-          : discussion
-      )));
+      const prochainesDiscussions = discussionsRef.current.map((item) => (
+        item.id === discussionId ? { ...item, non_lus_pharmacie: 0 } : item
+      ));
+      discussionsRef.current = prochainesDiscussions;
+      setDiscussions(prochainesDiscussions);
     } catch (error) {
       console.error("Erreur lors du marquage des demandes comme lues :", error);
+    } finally {
+      marquagesEnCoursRef.current.delete(discussionId);
     }
   }, []);
 
@@ -116,38 +116,36 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
     Promise.resolve().then(charger);
   }, [charger]);
 
+  const nonLusDiscussionOuverte = discussions.find(
+    (discussion) => discussion.id === discussionOuverteId
+  )?.non_lus_pharmacie || 0;
+
   useEffect(() => {
-    if (sectionOuverte && discussionOuverteId) {
+    if (sectionOuverte && discussionOuverteId && nonLusDiscussionOuverte > 0) {
       Promise.resolve().then(() => marquerLues(discussionOuverteId));
     }
-  }, [sectionOuverte, discussionOuverteId, marquerLues]);
+  }, [sectionOuverte, discussionOuverteId, nonLusDiscussionOuverte, marquerLues]);
 
   useEffect(() => {
     if (!pharmacieId) return undefined;
 
     let actif = true;
+    let dejaConnecte = false;
     const gererDiscussion = (payload) => {
       const discussion = payload.new;
       if (!discussion?.id) return;
-      idsDiscussionsRef.current.add(discussion.id);
-
-      setDiscussions((precedentes) => {
-        const existe = precedentes.some((item) => item.id === discussion.id);
-        const prochaineDiscussion = {
-          ...precedentes.find((item) => item.id === discussion.id),
-          ...discussion,
-        };
-
-        if (sectionOuverteRef.current && discussionOuverteRef.current === discussion.id) {
-          prochaineDiscussion.non_lus_pharmacie = 0;
-        }
-
-        return trierDiscussions(existe
-          ? precedentes.map((item) => (
-            item.id === discussion.id ? prochaineDiscussion : item
-          ))
-          : [...precedentes, { ...prochaineDiscussion, dernierMessage: null }]);
+      revisionsRealtimeRef.current += 1;
+      lignesRealtimeRef.current.set(discussion.id, {
+        revision: revisionsRealtimeRef.current,
+        discussion,
       });
+
+      const precedente = discussionsRef.current.find((item) => item.id === discussion.id);
+      const prochaineDiscussion = { ...precedente, ...discussion };
+      const autresDiscussions = discussionsRef.current.filter((item) => item.id !== discussion.id);
+      const prochainesDiscussions = [prochaineDiscussion, ...autresDiscussions].slice(0, 50);
+      discussionsRef.current = prochainesDiscussions;
+      setDiscussions(prochainesDiscussions);
     };
 
     const channel = supabase
@@ -179,23 +177,18 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
           const message = payload.new;
           if (!message?.discussion_id) return;
 
-          setVersionMessages((version) => version + 1);
-          if (!idsDiscussionsRef.current.has(message.discussion_id)) {
-            Promise.resolve().then(charger);
+          if (sectionOuverteRef.current && discussionOuverteRef.current === message.discussion_id) {
+            setMessagesEnTempsReel((precedents) => {
+              const messagesDiscussion = precedents.filter(
+                (item) => item.discussion_id === message.discussion_id
+              );
+              const existant = messagesDiscussion.findIndex((item) => item.id === message.id);
+              if (existant < 0) return [...messagesDiscussion, { ...message, evenement: "INSERT" }];
+              return messagesDiscussion.map((item, index) => (
+                index === existant ? { ...message, evenement: "INSERT" } : item
+              ));
+            });
           }
-
-          setDiscussions((precedentes) => {
-            return trierDiscussions(precedentes.map((discussion) => {
-              if (discussion.id !== message.discussion_id) return discussion;
-
-              const dernierMessage = discussion.dernierMessage;
-              if (dernierMessage && new Date(dernierMessage.cree_le) > new Date(message.cree_le)) {
-                return discussion;
-              }
-
-              return { ...discussion, dernierMessage: message };
-            }));
-          });
 
           if (message.auteur_role === "client") {
             if (!sectionOuverteRef.current) {
@@ -206,10 +199,36 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
           }
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "discussion_messages" },
+        (payload) => {
+          const message = payload.new;
+          if (
+            !message?.id
+            || !sectionOuverteRef.current
+            || discussionOuverteRef.current !== message.discussion_id
+          ) return;
+          setMessagesEnTempsReel((precedents) => {
+            const messagesDiscussion = precedents.filter(
+              (item) => item.discussion_id === message.discussion_id
+            );
+            const existant = messagesDiscussion.findIndex((item) => item.id === message.id);
+            if (existant < 0) return [...messagesDiscussion, { ...message, evenement: "UPDATE" }];
+            return messagesDiscussion.map((item, index) => (
+              index === existant
+                ? { ...item, lu_le: message.lu_le }
+                : item
+            ));
+          });
+        }
+      )
       .subscribe((status, error) => {
         if (!actif) return;
         if (status === "SUBSCRIBED") {
           setErreurCanal(false);
+          if (dejaConnecte) Promise.resolve().then(charger);
+          dejaConnecte = true;
         } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
           console.error("Erreur du canal Realtime des demandes clients :", error || status);
           setErreurCanal(true);
@@ -220,7 +239,7 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
       actif = false;
       supabase.removeChannel(channel);
     };
-  }, [pharmacieId, versionCanal, charger, marquerLues, showToast]);
+  }, [pharmacieId, charger, marquerLues, showToast]);
 
   const nonLus = useMemo(
     () => discussions.reduce((total, discussion) => total + (discussion.non_lus_pharmacie || 0), 0),
@@ -249,7 +268,7 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
     chargement,
     erreur,
     erreurCanal,
-    versionMessages,
+    messagesEnTempsReel,
     actualiser,
     marquerLues,
   };
