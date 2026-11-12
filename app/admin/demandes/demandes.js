@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftIcon, ArrowPathIcon, PaperAirplaneIcon } from "@heroicons/react/24/outline";
-import { supabase } from "@/app/lib/supabaseClient";
 
 const reponsesRapides = [
   "Disponible, vous pouvez venir le retirer",
@@ -26,26 +25,25 @@ export default function Demandes({
   chargement,
   erreur,
   erreurCanal,
-  messagesEnTempsReel,
+  messages,
+  nomsMedicaments,
+  chargementMessages,
+  erreurMessages,
+  chargementPrecedents,
+  peutChargerPrecedents,
+  chargerMessages,
+  chargerMessagesPrecedents,
+  envoyerMessage: envoyerMessageEnMemoire,
   actualiser,
   discussionOuverteId,
   onOuvrirDiscussion,
 }) {
-  const [messages, setMessages] = useState([]);
-  const [nomsMedicaments, setNomsMedicaments] = useState({});
-  const nomsMedicamentsCacheRef = useRef(new Map());
-  const medicamentsEnCoursRef = useRef(new Set());
-  const [chargementMessages, setChargementMessages] = useState(false);
-  const [chargementPrecedents, setChargementPrecedents] = useState(false);
-  const [peutChargerPrecedents, setPeutChargerPrecedents] = useState(false);
-  const [erreurMessages, setErreurMessages] = useState(false);
   const [filtreNonLus, setFiltreNonLus] = useState(false);
   const [contenu, setContenu] = useState("");
   const [envoi, setEnvoi] = useState(false);
   const [erreurEnvoi, setErreurEnvoi] = useState("");
   const filRef = useRef(null);
-  const requestIdRef = useRef(0);
-  const conserverPositionDefilementRef = useRef(false);
+  const conserverPositionDefilementRef = useRef(null);
 
   const discussionOuverte = discussions.find((discussion) => discussion.id === discussionOuverteId);
   const discussionsFiltrees = useMemo(
@@ -61,176 +59,16 @@ export default function Demandes({
     onOuvrirDiscussion(discussionId);
   }, [onOuvrirDiscussion]);
 
-  const chargerNomsMedicaments = useCallback(async (messagesAAnalyser) => {
-    const ids = [...new Set(
-      messagesAAnalyser
-        .map((message) => message.id_medicament)
-        .filter((id) => id !== null && id !== undefined)
-    )];
-    const nouveauxIds = ids.filter((id) => (
-      !nomsMedicamentsCacheRef.current.has(id)
-      && !medicamentsEnCoursRef.current.has(id)
-    ));
-
-    if (nouveauxIds.length > 0) {
-      nouveauxIds.forEach((id) => medicamentsEnCoursRef.current.add(id));
-      try {
-        const { data, error } = await supabase
-          .from("medicaments")
-          .select("id, nom")
-          .in("id", nouveauxIds);
-        if (error) throw error;
-
-        const nomsParId = new Map((data || []).map((medicament) => [medicament.id, medicament.nom]));
-        for (const id of nouveauxIds) {
-          nomsMedicamentsCacheRef.current.set(id, nomsParId.get(id) || null);
-        }
-      } finally {
-        nouveauxIds.forEach((id) => medicamentsEnCoursRef.current.delete(id));
-      }
-    }
-
-    setNomsMedicaments(Object.fromEntries(nomsMedicamentsCacheRef.current));
-  }, []);
-
-  const chargerMessages = useCallback(async () => {
-    if (!discussionOuverteId) {
-      requestIdRef.current += 1;
-      setMessages([]);
-      setPeutChargerPrecedents(false);
-      setChargementMessages(false);
-      setErreurMessages(false);
+  useEffect(() => {
+    if (!filRef.current) return;
+    if (conserverPositionDefilementRef.current) {
+      const { hauteur, position } = conserverPositionDefilementRef.current;
+      conserverPositionDefilementRef.current = null;
+      filRef.current.scrollTop = position + filRef.current.scrollHeight - hauteur;
       return;
     }
-
-    const requestId = ++requestIdRef.current;
-    setMessages([]);
-    setPeutChargerPrecedents(false);
-    setChargementPrecedents(false);
-    setChargementMessages(true);
-    setErreurMessages(false);
-
-    try {
-      const { data, error: erreurChargement } = await supabase
-        .from("discussion_messages")
-        .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le, lu_le")
-        .eq("discussion_id", discussionOuverteId)
-        .order("cree_le", { ascending: false })
-        .limit(50);
-
-      if (erreurChargement) throw erreurChargement;
-      if (requestId !== requestIdRef.current) return;
-
-      const messagesCharges = [...(data || [])].reverse();
-      setPeutChargerPrecedents(messagesCharges.length === 50);
-      setMessages((precedents) => {
-        const reunis = new Map(
-          precedents
-            .filter((message) => message.discussion_id === discussionOuverteId)
-            .map((message) => [message.id, message])
-        );
-        for (const message of messagesCharges) {
-          reunis.set(message.id, { ...message, ...reunis.get(message.id) });
-        }
-        return [...reunis.values()].sort((a, b) => new Date(a.cree_le) - new Date(b.cree_le));
-      });
-      await chargerNomsMedicaments(messagesCharges);
-      if (requestId !== requestIdRef.current) return;
-    } catch (error) {
-      if (requestId !== requestIdRef.current) return;
-      console.error("Erreur lors du chargement des messages de la demande :", error);
-      setErreurMessages(true);
-    } finally {
-      if (requestId === requestIdRef.current) setChargementMessages(false);
-    }
-  }, [discussionOuverteId, chargerNomsMedicaments]);
-
-  const messagesAffiches = useMemo(() => {
-    const reunis = new Map(
-      messages
-        .filter((message) => message.discussion_id === discussionOuverteId)
-        .map((message) => [message.id, message])
-    );
-    for (const evenement of messagesEnTempsReel) {
-      if (evenement.discussion_id !== discussionOuverteId) continue;
-      if (evenement.evenement === "INSERT" && !reunis.has(evenement.id)) {
-        reunis.set(evenement.id, evenement);
-      } else if (evenement.evenement === "UPDATE" && reunis.has(evenement.id)) {
-        reunis.set(evenement.id, { ...reunis.get(evenement.id), lu_le: evenement.lu_le });
-      }
-    }
-    return [...reunis.values()].sort((a, b) => new Date(a.cree_le) - new Date(b.cree_le));
-  }, [messages, messagesEnTempsReel, discussionOuverteId]);
-
-  const chargerMessagesPrecedents = useCallback(async () => {
-    if (!discussionOuverteId || !messagesAffiches.length || chargementPrecedents) return;
-
-    const requestId = requestIdRef.current;
-    const curseur = messagesAffiches[0].cree_le;
-    const hauteurAvant = filRef.current?.scrollHeight || 0;
-    const positionAvant = filRef.current?.scrollTop || 0;
-    setChargementPrecedents(true);
-
-    try {
-      const { data, error: erreurChargement } = await supabase
-        .from("discussion_messages")
-        .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le, lu_le")
-        .eq("discussion_id", discussionOuverteId)
-        .lt("cree_le", curseur)
-        .order("cree_le", { ascending: false })
-        .limit(50);
-
-      if (erreurChargement) throw erreurChargement;
-      if (requestId !== requestIdRef.current) return;
-
-      const messagesCharges = [...(data || [])].reverse();
-      setPeutChargerPrecedents(messagesCharges.length === 50);
-      if (messagesCharges.length > 0) conserverPositionDefilementRef.current = true;
-      setMessages((precedents) => {
-        const reunis = new Map(precedents.map((message) => [message.id, message]));
-        for (const message of messagesCharges) reunis.set(message.id, message);
-        return [...reunis.values()].sort((a, b) => new Date(a.cree_le) - new Date(b.cree_le));
-      });
-
-      await chargerNomsMedicaments(messagesCharges);
-      if (requestId !== requestIdRef.current) return;
-
-      requestAnimationFrame(() => {
-        if (!filRef.current) return;
-        filRef.current.scrollTop = positionAvant + filRef.current.scrollHeight - hauteurAvant;
-      });
-    } catch (error) {
-      if (requestId !== requestIdRef.current) return;
-      console.error("Erreur lors du chargement des messages précédents :", error);
-      setErreurMessages(true);
-    } finally {
-      if (requestId === requestIdRef.current) setChargementPrecedents(false);
-    }
-  }, [discussionOuverteId, messagesAffiches, chargementPrecedents, chargerNomsMedicaments]);
-
-  useEffect(() => {
-    Promise.resolve().then(chargerMessages);
-  }, [chargerMessages]);
-
-  useEffect(() => {
-    const insertions = messagesEnTempsReel.filter((message) => (
-      message.evenement === "INSERT" && message.discussion_id === discussionOuverteId
-    ));
-    if (insertions.length === 0) return;
-    Promise.resolve().then(() => chargerNomsMedicaments(insertions)).catch((error) => {
-      console.error("Erreur lors du chargement des noms de médicaments :", error);
-    });
-  }, [messagesEnTempsReel, discussionOuverteId, chargerNomsMedicaments]);
-
-  useEffect(() => {
-    if (filRef.current) {
-      if (conserverPositionDefilementRef.current) {
-        conserverPositionDefilementRef.current = false;
-        return;
-      }
-      filRef.current.scrollTop = filRef.current.scrollHeight;
-    }
-  }, [messagesAffiches.length]);
+    filRef.current.scrollTop = filRef.current.scrollHeight;
+  }, [messages.length]);
 
   const envoyerMessage = async () => {
     const texte = contenu.trim();
@@ -240,18 +78,7 @@ export default function Demandes({
     setErreurEnvoi("");
 
     try {
-      const { data: messageInsere, error: erreurInsertion } = await supabase
-        .from("discussion_messages")
-        .insert({ discussion_id: discussionOuverteId, contenu: texte })
-        .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le, lu_le")
-        .single();
-
-      if (erreurInsertion) throw erreurInsertion;
-
-      setMessages((precedents) => {
-        if (precedents.some((message) => message.id === messageInsere.id)) return precedents;
-        return [...precedents, messageInsere].sort((a, b) => new Date(a.cree_le) - new Date(b.cree_le));
-      });
+      await envoyerMessageEnMemoire(discussionOuverteId, texte);
       setContenu("");
     } catch (error) {
       console.error("Erreur lors de l'envoi d'une réponse client :", error);
@@ -263,6 +90,30 @@ export default function Demandes({
     } finally {
       setEnvoi(false);
     }
+  };
+
+  const reessayerMessage = async (message) => {
+    if (envoi) return;
+    setEnvoi(true);
+    setErreurEnvoi("");
+    try {
+      await envoyerMessageEnMemoire(discussionOuverteId, message.contenu, message.id);
+    } catch (error) {
+      console.error("Erreur lors de la nouvelle tentative d'envoi :", error);
+      setErreurEnvoi("Impossible d'envoyer le message. Réessayez.");
+    } finally {
+      setEnvoi(false);
+    }
+  };
+
+  const chargerAnciensMessages = async () => {
+    if (filRef.current) {
+      conserverPositionDefilementRef.current = {
+        hauteur: filRef.current.scrollHeight,
+        position: filRef.current.scrollTop,
+      };
+    }
+    await chargerMessagesPrecedents();
   };
 
   const gererTouche = (event) => {
@@ -441,7 +292,7 @@ export default function Demandes({
                   <p className="text-sm text-rose-700">Impossible de charger les messages.</p>
                   <button
                     type="button"
-                    onClick={chargerMessages}
+                    onClick={() => chargerMessages(discussionOuverteId)}
                     aria-label="Réessayer de charger les messages"
                     className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white"
                   >
@@ -460,7 +311,7 @@ export default function Demandes({
                     <div className="flex justify-center">
                       <button
                         type="button"
-                        onClick={chargerMessagesPrecedents}
+                        onClick={chargerAnciensMessages}
                         disabled={chargementPrecedents}
                         className="rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
                       >
@@ -468,7 +319,7 @@ export default function Demandes({
                       </button>
                     </div>
                   )}
-                  {messagesAffiches.map((message) => {
+                  {messages.map((message) => {
                     const estPharmacie = message.auteur_role === "pharmacie";
                     return (
                       <article
@@ -496,6 +347,21 @@ export default function Demandes({
                           >
                             {formaterDate(message.cree_le)}
                           </time>
+                          {message.envoiStatut === "envoi" && (
+                            <span className="mt-1 block text-right text-[11px] opacity-80">
+                              Envoi…
+                            </span>
+                          )}
+                          {message.envoiStatut === "echec" && (
+                            <button
+                              type="button"
+                              onClick={() => reessayerMessage(message)}
+                              disabled={envoi}
+                              className="mt-1 block w-full text-right text-[11px] font-semibold underline disabled:opacity-50"
+                            >
+                              Échec — réessayer
+                            </button>
+                          )}
                         </div>
                       </article>
                     );

@@ -52,6 +52,13 @@ export default function Acceuil() {
   const showToast = useToast();
   const messagerie = useMessagerie(info.id, page === "m");
   const demandes = useDemandes(info.id, page === "d", discussionOuverteId);
+  const viderCacheDemandes = demandes.viderCache;
+  const viderCacheMessagerie = messagerie.viderCache;
+  const preparerOuvertureDiscussion = demandes.preparerOuverture;
+  const ouvrirDiscussion = useCallback((discussionId) => {
+    preparerOuvertureDiscussion(discussionId);
+    setDiscussionOuverteId(discussionId);
+  }, [preparerOuvertureDiscussion]);
 
   useEffect(() => {
     if (!isLogoutConfirmOpen) return;
@@ -72,6 +79,8 @@ export default function Acceuil() {
         const { data: { user }, error: userError } = await supabase.auth.getUser();
 
         if (userError || !user) {
+          viderCacheDemandes();
+          viderCacheMessagerie();
           localStorage.removeItem("token_pharmacie");
           nav.push("/admin/connexion");
           return;
@@ -104,6 +113,8 @@ export default function Acceuil() {
         if (profError || !profile) {
           showToast("Accès interdit : cette interface est réservée aux pharmaciens.", "error");
           await supabase.auth.signOut();
+          viderCacheDemandes();
+          viderCacheMessagerie();
           localStorage.removeItem("token_pharmacie");
           nav.push("/admin/connexion");
           return;
@@ -114,13 +125,15 @@ export default function Acceuil() {
         setLoadingProfile(false);
       } catch (error) {
         console.error("Erreur de vérification de la session :", error);
+        viderCacheDemandes();
+        viderCacheMessagerie();
         localStorage.removeItem("token_pharmacie");
         nav.push("/admin/connexion");
       }
     };
 
     fetchProfile();
-  }, [nav, showToast]);
+  }, [nav, showToast, viderCacheDemandes, viderCacheMessagerie]);
 
   const signalerModifications = useCallback((modifie, annuler) => {
     annulerModificationsRef.current = annuler;
@@ -156,6 +169,8 @@ export default function Acceuil() {
     }
     localStorage.removeItem("token_pharmacie");
     localStorage.removeItem("role_pharmacie");
+    viderCacheDemandes();
+    viderCacheMessagerie();
     showToast("Déconnexion réussie !", "success");
     nav.push("/admin/connexion");
   };
@@ -223,12 +238,18 @@ export default function Acceuil() {
   } else if (page === "m") {
     ComposantCentral = (
       <Messages
-        pharmacieId={info.id}
         conversation={messagerie.conversation}
-        adopterConversation={messagerie.adopterConversation}
+        messages={messagerie.messages}
+        envoyerMessage={messagerie.envoyerMessage}
+        chargerMessages={messagerie.chargerMessages}
+        chargerMessagesPrecedents={messagerie.chargerMessagesPrecedents}
         recharger={messagerie.recharger}
         chargementConversation={messagerie.chargement}
+        chargementMessages={messagerie.chargementMessages}
+        chargementPrecedents={messagerie.chargementPrecedents}
+        peutChargerPrecedents={messagerie.peutChargerPrecedents}
         erreurConversation={messagerie.erreur}
+        erreurMessages={messagerie.erreurMessages}
       />
     );
   } else if (page === "d") {
@@ -239,10 +260,18 @@ export default function Acceuil() {
         chargement={demandes.chargement}
         erreur={demandes.erreur}
         erreurCanal={demandes.erreurCanal}
-        messagesEnTempsReel={demandes.messagesEnTempsReel}
+        messages={demandes.messages}
+        nomsMedicaments={demandes.nomsMedicaments}
+        chargementMessages={demandes.chargementMessages}
+        erreurMessages={demandes.erreurMessages}
+        chargementPrecedents={demandes.chargementPrecedents}
+        peutChargerPrecedents={demandes.peutChargerPrecedents}
+        chargerMessages={demandes.chargerMessages}
+        chargerMessagesPrecedents={demandes.chargerMessagesPrecedents}
+        envoyerMessage={demandes.envoyerMessage}
         actualiser={demandes.actualiser}
         discussionOuverteId={discussionOuverteId}
-        onOuvrirDiscussion={setDiscussionOuverteId}
+        onOuvrirDiscussion={ouvrirDiscussion}
       />
     );
   } else if (page === "r") {
