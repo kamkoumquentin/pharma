@@ -26,14 +26,18 @@ export default function Demandes({
   chargement,
   erreur,
   erreurCanal,
-  versionMessages,
+  messagesEnTempsReel,
   actualiser,
   discussionOuverteId,
   onOuvrirDiscussion,
 }) {
   const [messages, setMessages] = useState([]);
   const [nomsMedicaments, setNomsMedicaments] = useState({});
+  const nomsMedicamentsCacheRef = useRef(new Map());
+  const medicamentsEnCoursRef = useRef(new Set());
   const [chargementMessages, setChargementMessages] = useState(false);
+  const [chargementPrecedents, setChargementPrecedents] = useState(false);
+  const [peutChargerPrecedents, setPeutChargerPrecedents] = useState(false);
   const [erreurMessages, setErreurMessages] = useState(false);
   const [filtreNonLus, setFiltreNonLus] = useState(false);
   const [contenu, setContenu] = useState("");
@@ -41,6 +45,7 @@ export default function Demandes({
   const [erreurEnvoi, setErreurEnvoi] = useState("");
   const filRef = useRef(null);
   const requestIdRef = useRef(0);
+  const conserverPositionDefilementRef = useRef(false);
 
   const discussionOuverte = discussions.find((discussion) => discussion.id === discussionOuverteId);
   const discussionsFiltrees = useMemo(
@@ -56,14 +61,52 @@ export default function Demandes({
     onOuvrirDiscussion(discussionId);
   }, [onOuvrirDiscussion]);
 
+  const chargerNomsMedicaments = useCallback(async (messagesAAnalyser) => {
+    const ids = [...new Set(
+      messagesAAnalyser
+        .map((message) => message.id_medicament)
+        .filter((id) => id !== null && id !== undefined)
+    )];
+    const nouveauxIds = ids.filter((id) => (
+      !nomsMedicamentsCacheRef.current.has(id)
+      && !medicamentsEnCoursRef.current.has(id)
+    ));
+
+    if (nouveauxIds.length > 0) {
+      nouveauxIds.forEach((id) => medicamentsEnCoursRef.current.add(id));
+      try {
+        const { data, error } = await supabase
+          .from("medicaments")
+          .select("id, nom")
+          .in("id", nouveauxIds);
+        if (error) throw error;
+
+        const nomsParId = new Map((data || []).map((medicament) => [medicament.id, medicament.nom]));
+        for (const id of nouveauxIds) {
+          nomsMedicamentsCacheRef.current.set(id, nomsParId.get(id) || null);
+        }
+      } finally {
+        nouveauxIds.forEach((id) => medicamentsEnCoursRef.current.delete(id));
+      }
+    }
+
+    setNomsMedicaments(Object.fromEntries(nomsMedicamentsCacheRef.current));
+  }, []);
+
   const chargerMessages = useCallback(async () => {
     if (!discussionOuverteId) {
+      requestIdRef.current += 1;
       setMessages([]);
-      setNomsMedicaments({});
+      setPeutChargerPrecedents(false);
+      setChargementMessages(false);
+      setErreurMessages(false);
       return;
     }
 
     const requestId = ++requestIdRef.current;
+    setMessages([]);
+    setPeutChargerPrecedents(false);
+    setChargementPrecedents(false);
     setChargementMessages(true);
     setErreurMessages(false);
 
@@ -72,34 +115,27 @@ export default function Demandes({
         .from("discussion_messages")
         .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le, lu_le")
         .eq("discussion_id", discussionOuverteId)
-        .order("cree_le", { ascending: true });
+        .order("cree_le", { ascending: false })
+        .limit(50);
 
       if (erreurChargement) throw erreurChargement;
       if (requestId !== requestIdRef.current) return;
 
-      const messagesCharges = data || [];
-      setMessages(messagesCharges);
-
-      const idsMedicaments = [...new Set(
-        messagesCharges
-          .map((message) => message.id_medicament)
-          .filter((id) => id !== null)
-      )];
-
-      if (idsMedicaments.length === 0) {
-        setNomsMedicaments({});
-      } else {
-        const { data: medicaments, error: erreurMedicaments } = await supabase
-          .from("medicaments")
-          .select("id, nom")
-          .in("id", idsMedicaments);
-
-        if (erreurMedicaments) throw erreurMedicaments;
-        if (requestId !== requestIdRef.current) return;
-        setNomsMedicaments(Object.fromEntries(
-          (medicaments || []).map((medicament) => [medicament.id, medicament.nom])
-        ));
-      }
+      const messagesCharges = [...(data || [])].reverse();
+      setPeutChargerPrecedents(messagesCharges.length === 50);
+      setMessages((precedents) => {
+        const reunis = new Map(
+          precedents
+            .filter((message) => message.discussion_id === discussionOuverteId)
+            .map((message) => [message.id, message])
+        );
+        for (const message of messagesCharges) {
+          reunis.set(message.id, { ...message, ...reunis.get(message.id) });
+        }
+        return [...reunis.values()].sort((a, b) => new Date(a.cree_le) - new Date(b.cree_le));
+      });
+      await chargerNomsMedicaments(messagesCharges);
+      if (requestId !== requestIdRef.current) return;
     } catch (error) {
       if (requestId !== requestIdRef.current) return;
       console.error("Erreur lors du chargement des messages de la demande :", error);
@@ -107,17 +143,94 @@ export default function Demandes({
     } finally {
       if (requestId === requestIdRef.current) setChargementMessages(false);
     }
-  }, [discussionOuverteId]);
+  }, [discussionOuverteId, chargerNomsMedicaments]);
+
+  const messagesAffiches = useMemo(() => {
+    const reunis = new Map(
+      messages
+        .filter((message) => message.discussion_id === discussionOuverteId)
+        .map((message) => [message.id, message])
+    );
+    for (const evenement of messagesEnTempsReel) {
+      if (evenement.discussion_id !== discussionOuverteId) continue;
+      if (evenement.evenement === "INSERT" && !reunis.has(evenement.id)) {
+        reunis.set(evenement.id, evenement);
+      } else if (evenement.evenement === "UPDATE" && reunis.has(evenement.id)) {
+        reunis.set(evenement.id, { ...reunis.get(evenement.id), lu_le: evenement.lu_le });
+      }
+    }
+    return [...reunis.values()].sort((a, b) => new Date(a.cree_le) - new Date(b.cree_le));
+  }, [messages, messagesEnTempsReel, discussionOuverteId]);
+
+  const chargerMessagesPrecedents = useCallback(async () => {
+    if (!discussionOuverteId || !messagesAffiches.length || chargementPrecedents) return;
+
+    const requestId = requestIdRef.current;
+    const curseur = messagesAffiches[0].cree_le;
+    const hauteurAvant = filRef.current?.scrollHeight || 0;
+    const positionAvant = filRef.current?.scrollTop || 0;
+    setChargementPrecedents(true);
+
+    try {
+      const { data, error: erreurChargement } = await supabase
+        .from("discussion_messages")
+        .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le, lu_le")
+        .eq("discussion_id", discussionOuverteId)
+        .lt("cree_le", curseur)
+        .order("cree_le", { ascending: false })
+        .limit(50);
+
+      if (erreurChargement) throw erreurChargement;
+      if (requestId !== requestIdRef.current) return;
+
+      const messagesCharges = [...(data || [])].reverse();
+      setPeutChargerPrecedents(messagesCharges.length === 50);
+      if (messagesCharges.length > 0) conserverPositionDefilementRef.current = true;
+      setMessages((precedents) => {
+        const reunis = new Map(precedents.map((message) => [message.id, message]));
+        for (const message of messagesCharges) reunis.set(message.id, message);
+        return [...reunis.values()].sort((a, b) => new Date(a.cree_le) - new Date(b.cree_le));
+      });
+
+      await chargerNomsMedicaments(messagesCharges);
+      if (requestId !== requestIdRef.current) return;
+
+      requestAnimationFrame(() => {
+        if (!filRef.current) return;
+        filRef.current.scrollTop = positionAvant + filRef.current.scrollHeight - hauteurAvant;
+      });
+    } catch (error) {
+      if (requestId !== requestIdRef.current) return;
+      console.error("Erreur lors du chargement des messages précédents :", error);
+      setErreurMessages(true);
+    } finally {
+      if (requestId === requestIdRef.current) setChargementPrecedents(false);
+    }
+  }, [discussionOuverteId, messagesAffiches, chargementPrecedents, chargerNomsMedicaments]);
 
   useEffect(() => {
     Promise.resolve().then(chargerMessages);
-  }, [chargerMessages, versionMessages]);
+  }, [chargerMessages]);
+
+  useEffect(() => {
+    const insertions = messagesEnTempsReel.filter((message) => (
+      message.evenement === "INSERT" && message.discussion_id === discussionOuverteId
+    ));
+    if (insertions.length === 0) return;
+    Promise.resolve().then(() => chargerNomsMedicaments(insertions)).catch((error) => {
+      console.error("Erreur lors du chargement des noms de médicaments :", error);
+    });
+  }, [messagesEnTempsReel, discussionOuverteId, chargerNomsMedicaments]);
 
   useEffect(() => {
     if (filRef.current) {
+      if (conserverPositionDefilementRef.current) {
+        conserverPositionDefilementRef.current = false;
+        return;
+      }
       filRef.current.scrollTop = filRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messagesAffiches.length]);
 
   const envoyerMessage = async () => {
     const texte = contenu.trim();
@@ -127,14 +240,19 @@ export default function Demandes({
     setErreurEnvoi("");
 
     try {
-      const { error: erreurInsertion } = await supabase
+      const { data: messageInsere, error: erreurInsertion } = await supabase
         .from("discussion_messages")
-        .insert({ discussion_id: discussionOuverteId, contenu: texte });
+        .insert({ discussion_id: discussionOuverteId, contenu: texte })
+        .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le, lu_le")
+        .single();
 
       if (erreurInsertion) throw erreurInsertion;
 
+      setMessages((precedents) => {
+        if (precedents.some((message) => message.id === messageInsere.id)) return precedents;
+        return [...precedents, messageInsere].sort((a, b) => new Date(a.cree_le) - new Date(b.cree_le));
+      });
       setContenu("");
-      await chargerMessages();
     } catch (error) {
       console.error("Erreur lors de l'envoi d'une réponse client :", error);
       setErreurEnvoi(
@@ -264,11 +382,13 @@ export default function Demandes({
                       Client n° {discussion.utilisateur_id}
                     </span>
                     <span className="shrink-0 text-[11px] text-gray-400">
-                      {formaterDate(discussion.dernier_message_at || discussion.dernierMessage?.cree_le)}
+                      {formaterDate(discussion.dernier_message_at)}
                     </span>
                   </span>
                   <span className="mt-1 block truncate text-xs text-gray-500">
-                    {discussion.dernierMessage?.contenu || "Aucun message"}
+                    {discussion.dernier_extrait
+                      ? `${discussion.dernier_auteur_role === "pharmacie" ? "Vous" : "Client"} : ${discussion.dernier_extrait}`
+                      : "Aucun message"}
                   </span>
                 </span>
                 {discussion.non_lus_pharmacie > 0 && (
@@ -336,7 +456,19 @@ export default function Demandes({
                   aria-label="Fil des messages de la demande"
                   className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-6"
                 >
-                  {messages.map((message) => {
+                  {peutChargerPrecedents && (
+                    <div className="flex justify-center">
+                      <button
+                        type="button"
+                        onClick={chargerMessagesPrecedents}
+                        disabled={chargementPrecedents}
+                        className="rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        {chargementPrecedents ? "Chargement..." : "Voir les messages précédents"}
+                      </button>
+                    </div>
+                  )}
+                  {messagesAffiches.map((message) => {
                     const estPharmacie = message.auteur_role === "pharmacie";
                     return (
                       <article

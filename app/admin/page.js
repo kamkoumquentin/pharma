@@ -225,7 +225,7 @@ export default function Acceuil() {
       <Messages
         pharmacieId={info.id}
         conversation={messagerie.conversation}
-        messageRecu={messagerie.messageRecu}
+        adopterConversation={messagerie.adopterConversation}
         recharger={messagerie.recharger}
         chargementConversation={messagerie.chargement}
         erreurConversation={messagerie.erreur}
@@ -239,7 +239,7 @@ export default function Acceuil() {
         chargement={demandes.chargement}
         erreur={demandes.erreur}
         erreurCanal={demandes.erreurCanal}
-        versionMessages={demandes.versionMessages}
+        messagesEnTempsReel={demandes.messagesEnTempsReel}
         actualiser={demandes.actualiser}
         discussionOuverteId={discussionOuverteId}
         onOuvrirDiscussion={setDiscussionOuverteId}
