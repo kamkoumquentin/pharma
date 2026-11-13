@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ArrowLeftIcon, ArrowPathIcon, PaperAirplaneIcon } from "@heroicons/react/24/outline";
+import ChatMessageThread from "@/app/components/ChatMessageThread";
 
 const reponsesRapides = [
   "Disponible, vous pouvez venir le retirer",
@@ -42,9 +43,6 @@ export default function Demandes({
   const [contenu, setContenu] = useState("");
   const [envoi, setEnvoi] = useState(false);
   const [erreurEnvoi, setErreurEnvoi] = useState("");
-  const filRef = useRef(null);
-  const conserverPositionDefilementRef = useRef(null);
-
   const discussionOuverte = discussions.find((discussion) => discussion.id === discussionOuverteId);
   const discussionsFiltrees = useMemo(
     () => filtreNonLus
@@ -58,17 +56,6 @@ export default function Demandes({
     setErreurEnvoi("");
     onOuvrirDiscussion(discussionId);
   }, [onOuvrirDiscussion]);
-
-  useEffect(() => {
-    if (!filRef.current) return;
-    if (conserverPositionDefilementRef.current) {
-      const { hauteur, position } = conserverPositionDefilementRef.current;
-      conserverPositionDefilementRef.current = null;
-      filRef.current.scrollTop = position + filRef.current.scrollHeight - hauteur;
-      return;
-    }
-    filRef.current.scrollTop = filRef.current.scrollHeight;
-  }, [messages.length]);
 
   const envoyerMessage = async () => {
     const texte = contenu.trim();
@@ -107,12 +94,6 @@ export default function Demandes({
   };
 
   const chargerAnciensMessages = async () => {
-    if (filRef.current) {
-      conserverPositionDefilementRef.current = {
-        hauteur: filRef.current.scrollHeight,
-        position: filRef.current.scrollTop,
-      };
-    }
     await chargerMessagesPrecedents();
   };
 
@@ -169,7 +150,7 @@ export default function Demandes({
   }
 
   return (
-    <section className="flex h-full min-h-[480px] flex-col gap-3">
+    <section className="flex h-full min-h-0 flex-col gap-3">
       {erreurCanal && (
         <div role="alert" className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
           <p>La connexion temps réel a échoué. Actualisez pour réessayer.</p>
@@ -301,30 +282,19 @@ export default function Demandes({
                   </button>
                 </div>
               ) : (
-                <div
-                  ref={filRef}
-                  aria-live="polite"
-                  aria-label="Fil des messages de la demande"
-                  className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-6"
-                >
-                  {peutChargerPrecedents && (
-                    <div className="flex justify-center">
-                      <button
-                        type="button"
-                        onClick={chargerAnciensMessages}
-                        disabled={chargementPrecedents}
-                        className="rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
-                      >
-                        {chargementPrecedents ? "Chargement..." : "Voir les messages précédents"}
-                      </button>
-                    </div>
-                  )}
-                  {messages.map((message) => {
+                <ChatMessageThread
+                  key={discussionOuverteId}
+                  messages={messages}
+                  peutChargerPrecedents={peutChargerPrecedents}
+                  chargementPrecedents={chargementPrecedents}
+                  chargerMessagesPrecedents={chargerAnciensMessages}
+                  label="Fil des messages de la demande"
+                  renderMessage={(message) => {
                     const estPharmacie = message.auteur_role === "pharmacie";
                     return (
                       <article
                         key={message.id}
-                        className={`flex ${estPharmacie ? "justify-end" : "justify-start"}`}
+                        className={`flex shrink-0 ${estPharmacie ? "justify-end" : "justify-start"}`}
                       >
                         <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${
                           estPharmacie
@@ -365,8 +335,9 @@ export default function Demandes({
                         </div>
                       </article>
                     );
-                  })}
-                </div>
+                  }}
+                  contenuVide={null}
+                />
               )}
 
               <div className="shrink-0 space-y-3 border-t border-gray-100 p-4 sm:p-5">
@@ -405,7 +376,7 @@ export default function Demandes({
                       maxLength={500}
                       rows={3}
                       placeholder="Écrivez votre réponse..."
-                      className="block w-full resize-y rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                      className="block max-h-[30dvh] w-full resize-y rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                     />
                     <p className="mt-1 text-right text-xs text-gray-400">{contenu.length}/500</p>
                   </div>

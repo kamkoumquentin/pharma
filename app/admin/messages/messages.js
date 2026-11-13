@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { ArrowPathIcon, PaperAirplaneIcon } from "@heroicons/react/24/outline";
+import ChatMessageThread from "@/app/components/ChatMessageThread";
 
 const formaterDate = (date) => new Intl.DateTimeFormat("fr-FR", {
   timeZone: "Africa/Douala",
@@ -26,15 +27,10 @@ export default function Messages({
   const [contenu, setContenu] = useState("");
   const [erreurEnvoi, setErreurEnvoi] = useState(false);
   const [envoi, setEnvoi] = useState(false);
-  const filRef = useRef(null);
   const conversationId = conversation?.id;
 
-  useEffect(() => {
-    if (filRef.current) filRef.current.scrollTop = filRef.current.scrollHeight;
-  }, [messages.length]);
-
   const envoyer = async (texte = contenu.trim(), idOptimiste = null) => {
-    if (!texte || envoi || chargementConversation || texte.length > 2000) return;
+    if (!texte || envoi || chargementConversation || texte.length > 500) return;
     setEnvoi(true);
     setErreurEnvoi(false);
     try {
@@ -56,98 +52,87 @@ export default function Messages({
   };
 
   return (
-    <section className="flex h-full min-h-[420px] flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
-      <div
-        ref={filRef}
-        aria-live="polite"
-        className="flex-1 space-y-4 overflow-y-auto p-5"
-      >
-        {erreurConversation ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-            <p className="text-sm text-red-600">Impossible de charger la conversation.</p>
-            <button
-              type="button"
-              onClick={recharger}
-              aria-label="Réessayer de charger la conversation"
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
-            >
-              <ArrowPathIcon className="h-4 w-4" />
-              Réessayer
-            </button>
-          </div>
-        ) : chargementConversation || (chargementMessages && messages.length === 0) ? (
-          <div className="flex h-full items-center justify-center text-sm text-gray-400">
-            Chargement des messages...
-          </div>
-        ) : erreurMessages ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-            <p className="text-sm text-red-600">Impossible de charger les messages.</p>
-            <button
-              type="button"
-              onClick={() => chargerMessages(conversationId)}
-              aria-label="Réessayer de charger les messages"
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
-            >
-              <ArrowPathIcon className="h-4 w-4" />
-              Réessayer
-            </button>
-          </div>
-        ) : (
-          <>
-            {peutChargerPrecedents && (
-              <div className="flex justify-center">
-                <button
-                  type="button"
-                  onClick={chargerMessagesPrecedents}
-                  disabled={chargementPrecedents}
-                  className="rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
-                >
-                  {chargementPrecedents ? "Chargement..." : "Voir les messages précédents"}
-                </button>
-              </div>
-            )}
-            {messages.length === 0 ? (
-              <div className="flex h-full items-center justify-center px-4 text-center text-sm text-gray-500">
-                Aucun message pour le moment. Écrivez à l&apos;administration ci-dessous.
-              </div>
-            ) : messages.map((message) => {
-              const estPharmacie = message.auteur_role === "pharmacie";
-              return (
-                <article
-                  key={message.id}
-                  className={`flex ${estPharmacie ? "justify-end" : "justify-start"}`}
-                >
-                  <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-                    estPharmacie
-                      ? "rounded-br-md bg-emerald-600 text-white"
-                      : "rounded-bl-md bg-teal-50 text-gray-800"
+    <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
+      {erreurConversation ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+          <p className="text-sm text-red-600">Impossible de charger la conversation.</p>
+          <button
+            type="button"
+            onClick={recharger}
+            aria-label="Réessayer de charger la conversation"
+            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+          >
+            <ArrowPathIcon className="h-4 w-4" />
+            Réessayer
+          </button>
+        </div>
+      ) : chargementConversation || (chargementMessages && messages.length === 0) ? (
+        <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
+          Chargement des messages...
+        </div>
+      ) : erreurMessages ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+          <p className="text-sm text-red-600">Impossible de charger les messages.</p>
+          <button
+            type="button"
+            onClick={() => chargerMessages(conversationId)}
+            aria-label="Réessayer de charger les messages"
+            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+          >
+            <ArrowPathIcon className="h-4 w-4" />
+            Réessayer
+          </button>
+        </div>
+      ) : (
+        <ChatMessageThread
+          key={conversationId || "conversation-sans-id"}
+          messages={messages}
+          peutChargerPrecedents={peutChargerPrecedents}
+          chargementPrecedents={chargementPrecedents}
+          chargerMessagesPrecedents={chargerMessagesPrecedents}
+          label="Fil des messages avec l'administration"
+          contenuVide={messages.length === 0 ? (
+            <div className="flex h-full items-center justify-center px-4 text-center text-sm text-gray-500">
+              Aucun message pour le moment. Écrivez à l&apos;administration ci-dessous.
+            </div>
+          ) : null}
+          renderMessage={(message) => {
+            const estPharmacie = message.auteur_role === "pharmacie";
+            return (
+              <article
+                key={message.id}
+                className={`flex shrink-0 ${estPharmacie ? "justify-end" : "justify-start"}`}
+              >
+                <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                  estPharmacie
+                    ? "rounded-br-md bg-emerald-600 text-white"
+                    : "rounded-bl-md bg-teal-50 text-gray-800"
+                }`}>
+                  <p className="whitespace-pre-wrap break-words text-sm">{message.contenu}</p>
+                  <time dateTime={message.cree_le} className={`mt-1.5 block text-right text-[11px] ${
+                    estPharmacie ? "text-emerald-100" : "text-gray-500"
                   }`}>
-                    <p className="whitespace-pre-wrap break-words text-sm">{message.contenu}</p>
-                    <time dateTime={message.cree_le} className={`mt-1.5 block text-right text-[11px] ${
-                      estPharmacie ? "text-emerald-100" : "text-gray-500"
-                    }`}>
-                      {formaterDate(message.cree_le)}
-                    </time>
-                    {message.envoiStatut === "envoi" && (
-                      <span className="mt-1 block text-right text-[11px] opacity-80">Envoi…</span>
-                    )}
-                    {message.envoiStatut === "echec" && (
-                      <button
-                        type="button"
-                        onClick={() => envoyer(message.contenu, message.id)}
-                        disabled={envoi}
-                        className="mt-1 block w-full text-right text-[11px] font-semibold underline disabled:opacity-50"
-                      >
-                        Échec — réessayer
-                      </button>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
-          </>
-        )}
-      </div>
+                    {formaterDate(message.cree_le)}
+                  </time>
+                  {message.envoiStatut === "envoi" && (
+                    <span className="mt-1 block text-right text-[11px] opacity-80">Envoi…</span>
+                  )}
+                  {message.envoiStatut === "echec" && (
+                    <button
+                      type="button"
+                      onClick={() => envoyer(message.contenu, message.id)}
+                      disabled={envoi}
+                      className="mt-1 block w-full text-right text-[11px] font-semibold underline disabled:opacity-50"
+                    >
+                      Échec — réessayer
+                    </button>
+                  )}
+                </div>
+              </article>
+            );
+          }}
+        />
+      )}
 
       <div className="border-t border-gray-100 p-4">
         {erreurEnvoi && (
@@ -162,16 +147,16 @@ export default function Messages({
               id="message-pharmacie"
               value={contenu}
               onChange={(event) => {
-                setContenu(event.target.value.slice(0, 2000));
+                setContenu(event.target.value.slice(0, 500));
                 setErreurEnvoi(false);
               }}
               onKeyDown={gererTouche}
-              maxLength={2000}
+              maxLength={500}
               rows={3}
               placeholder="Écrivez votre message..."
-              className="block w-full resize-y rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+              className="block max-h-[30dvh] w-full resize-y rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
             />
-            <p className="mt-1 text-right text-xs text-gray-400">{contenu.length}/2000</p>
+            <p className="mt-1 text-right text-xs text-gray-400">{contenu.length}/500</p>
           </div>
           <button
             type="button"
