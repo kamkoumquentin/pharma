@@ -45,7 +45,14 @@ const estStatutSuspendu = (statut) => statutsSuspendus.has(
 
 export default function Acceuil() {
   const [page, setpage] = useState("l");
-  const [info, setinfo] = useState({ id: "", nom: "", ville: "", emplacement: "", photo: "" });
+  const [info, setinfo] = useState({
+    id: "",
+    nom: "",
+    ville: "",
+    emplacement: "",
+    photo: "",
+    visible: true,
+  });
   const [token, setToken] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
@@ -92,7 +99,6 @@ export default function Acceuil() {
           return;
         }
 
-        const truncatedId = user.id ? user.id.slice(0, 6) : "inconnu";
         let profile = null;
         let profError = null;
         const maxAttempts = 5;
@@ -100,14 +106,12 @@ export default function Acceuil() {
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           const res = await supabase
             .from("pharmacies")
-            .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude, statut")
+            .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude, statut, visible")
             .eq("owner_id", user.id)
             .maybeSingle();
 
           profile = res.data;
           profError = res.error;
-
-          console.log(`[DIAG] User: ${truncatedId}... | Tentative ${attempt}/${maxAttempts} | Profil trouvé : ${!!profile}`);
 
           if (profile) break;
 
@@ -158,11 +162,18 @@ export default function Acceuil() {
         (payload) => {
           const pharmacie = payload.new;
           if (!pharmacie?.id || String(pharmacie.id) !== String(info.id)) return;
-          if (!Object.prototype.hasOwnProperty.call(pharmacie, "statut")) return;
+          const miseAJour = {};
+          if (Object.prototype.hasOwnProperty.call(pharmacie, "statut")) {
+            miseAJour.statut = pharmacie.statut;
+          }
+          if (Object.prototype.hasOwnProperty.call(pharmacie, "visible")) {
+            miseAJour.visible = pharmacie.visible;
+          }
+          if (Object.keys(miseAJour).length === 0) return;
 
           setinfo((precedent) => (
             String(precedent.id) === String(pharmacie.id)
-              ? { ...precedent, statut: pharmacie.statut }
+              ? { ...precedent, ...miseAJour }
               : precedent
           ));
         }
@@ -468,6 +479,15 @@ export default function Acceuil() {
             className="shrink-0 border-b border-amber-200 bg-amber-50 px-8 py-3 text-sm font-medium text-amber-900"
           >
             Votre inscription est en cours de validation. Votre pharmacie n&apos;apparaît pas encore dans Mediskip.
+          </div>
+        )}
+
+        {info.visible === false && (
+          <div
+            role="status"
+            className="shrink-0 border-b border-amber-200 bg-amber-50 px-8 py-3 text-sm font-medium text-amber-900"
+          >
+            Votre pharmacie est masquée aux clients. Vous pouvez continuer à utiliser le tableau de bord pour corriger la situation.
           </div>
         )}
 
