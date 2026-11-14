@@ -38,6 +38,11 @@ const MedicalMapPinIcon = ({ className = "w-5 h-5" }) => (
   </svg>
 );
 
+const statutsSuspendus = new Set(["suspendu", "suspended", "bloque", "bloqué", "blocked"]);
+const estStatutSuspendu = (statut) => statutsSuspendus.has(
+  String(statut || "").trim().toLowerCase()
+);
+
 export default function Acceuil() {
   const [page, setpage] = useState("l");
   const [info, setinfo] = useState({ id: "", nom: "", ville: "", emplacement: "", photo: "" });
@@ -48,6 +53,7 @@ export default function Acceuil() {
   const [discussionOuverteId, setDiscussionOuverteId] = useState(null);
   const [modificationsNonEnregistrees, setModificationsNonEnregistrees] = useState(false);
   const annulerModificationsRef = useRef(null);
+  const canalStatutRef = useRef(null);
   const nav = useRouter();
   const showToast = useToast();
   const messagerie = useMessagerie(info.id, page === "m");
@@ -135,6 +141,49 @@ export default function Acceuil() {
     fetchProfile();
   }, [nav, showToast, viderCacheDemandes, viderCacheMessagerie]);
 
+  useEffect(() => {
+    if (!info.id) return undefined;
+
+    let actif = true;
+    const channel = supabase
+      .channel(`statut-pharmacie-${info.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "pharmacies",
+          filter: `id=eq.${info.id}`,
+        },
+        (payload) => {
+          const pharmacie = payload.new;
+          if (!pharmacie?.id || String(pharmacie.id) !== String(info.id)) return;
+          if (!Object.prototype.hasOwnProperty.call(pharmacie, "statut")) return;
+
+          setinfo((precedent) => (
+            String(precedent.id) === String(pharmacie.id)
+              ? { ...precedent, statut: pharmacie.statut }
+              : precedent
+          ));
+        }
+      )
+      .subscribe((status, error) => {
+        if (!actif) return;
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          console.error("Erreur du canal Realtime du statut pharmacie :", error || status);
+        }
+      });
+    canalStatutRef.current = channel;
+
+    return () => {
+      actif = false;
+      if (canalStatutRef.current === channel) {
+        canalStatutRef.current = null;
+        supabase.removeChannel(channel);
+      }
+    };
+  }, [info.id]);
+
   const signalerModifications = useCallback((modifie, annuler) => {
     annulerModificationsRef.current = annuler;
     setModificationsNonEnregistrees(modifie);
@@ -162,6 +211,10 @@ export default function Acceuil() {
   }, [modificationsNonEnregistrees]);
 
   const deconnexion = async () => {
+    const canalStatut = canalStatutRef.current;
+    canalStatutRef.current = null;
+    if (canalStatut) supabase.removeChannel(canalStatut);
+
     try {
       await supabase.auth.signOut();
     } catch (error) {
@@ -204,6 +257,29 @@ export default function Acceuil() {
           Vérification de votre compte pharmacie...
         </p>
       </div>
+    );
+  }
+
+  if (estStatutSuspendu(info.statut)) {
+    return (
+      <main className="fixed inset-0 z-[100] flex h-dvh items-center justify-center bg-gray-50 p-6">
+        <section
+          role="alert"
+          className="w-full max-w-lg rounded-2xl border border-rose-200 bg-white p-8 text-center shadow-sm"
+        >
+          <h1 className="text-xl font-bold text-rose-900">Pharmacie suspendue</h1>
+          <p className="mt-3 text-sm leading-6 text-rose-800">
+            Votre pharmacie est suspendue et n&apos;apparaît pas dans Mediskip. Contactez le support.
+          </p>
+          <button
+            type="button"
+            onClick={deconnexion}
+            className="mt-6 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-700"
+          >
+            Se déconnecter
+          </button>
+        </section>
+      </main>
     );
   }
 
@@ -392,15 +468,6 @@ export default function Acceuil() {
             className="shrink-0 border-b border-amber-200 bg-amber-50 px-8 py-3 text-sm font-medium text-amber-900"
           >
             Votre inscription est en cours de validation. Votre pharmacie n&apos;apparaît pas encore dans Mediskip.
-          </div>
-        )}
-
-        {info.statut === "suspendu" && (
-          <div
-            role="alert"
-            className="shrink-0 border-b border-rose-200 bg-rose-50 px-8 py-3 text-sm font-medium text-rose-900"
-          >
-            Votre pharmacie est suspendue et n&apos;apparaît pas dans Mediskip. Contactez le support.
           </div>
         )}
 
