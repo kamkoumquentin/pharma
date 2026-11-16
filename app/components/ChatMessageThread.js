@@ -2,7 +2,46 @@
 
 import { useLayoutEffect, useRef, useState } from "react";
 
+const formateurJour = new Intl.DateTimeFormat("fr-FR", {
+  timeZone: "Africa/Douala",
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
+const formateurPartiesJour = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Africa/Douala",
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+});
+
 const distanceDuBas = (element) => Math.abs(element.scrollTop);
+
+const obtenirJourDouala = (valeur) => {
+  const date = new Date(valeur);
+  if (Number.isNaN(date.getTime())) return null;
+
+  const parties = Object.fromEntries(
+    formateurPartiesJour.formatToParts(date)
+      .filter((partie) => partie.type !== "literal")
+      .map((partie) => [partie.type, partie.value])
+  );
+  const annee = Number(parties.year);
+  const mois = Number(parties.month);
+  const jour = Number(parties.day);
+
+  return {
+    cle: `${parties.year}-${parties.month}-${parties.day}`,
+    numero: Date.UTC(annee, mois - 1, jour) / 86400000,
+    date,
+  };
+};
+
+const formaterSeparateurJour = (jour, aujourdHui) => {
+  if (aujourdHui && jour.numero === aujourdHui.numero) return "Aujourd'hui";
+  if (aujourdHui && jour.numero === aujourdHui.numero - 1) return "Hier";
+  return formateurJour.format(jour.date);
+};
 
 export default function ChatMessageThread({
   messages,
@@ -17,6 +56,7 @@ export default function ChatMessageThread({
   const messagesPrecedentsRef = useRef(null);
   const estAuBasRef = useRef(true);
   const [nouveauMessageDisponible, setNouveauMessageDisponible] = useState(false);
+  const [aujourdHui, setAujourdHui] = useState(null);
 
   useLayoutEffect(() => {
     const fil = filRef.current;
@@ -60,11 +100,57 @@ export default function ChatMessageThread({
     }
   }, [messages]);
 
+  useEffect(() => {
+    const actualiserJour = () => {
+      const prochainJour = obtenirJourDouala(Date.now());
+      if (!prochainJour) return;
+      setAujourdHui((jourActuel) => (
+        jourActuel?.cle === prochainJour.cle ? jourActuel : prochainJour
+      ));
+    };
+    const timerInitial = window.setTimeout(actualiserJour, 0);
+    const intervalle = window.setInterval(actualiserJour, 60_000);
+
+    return () => {
+      window.clearTimeout(timerInitial);
+      window.clearInterval(intervalle);
+    };
+  }, [messages]);
+
   const gererDefilement = () => {
     const estAuBas = distanceDuBas(filRef.current) <= 120;
     estAuBasRef.current = estAuBas;
     if (estAuBas) setNouveauMessageDisponible(false);
   };
+
+  const messagesDansOrdreInverse = [...messages].reverse().map((message) => ({
+    message,
+    jour: obtenirJourDouala(message.cree_le),
+  }));
+  const elementsMessages = messagesDansOrdreInverse.flatMap((element, index) => {
+    const prochainJour = messagesDansOrdreInverse[index + 1]?.jour;
+    const finDuJour = element.jour
+      && (index === messagesDansOrdreInverse.length - 1 || element.jour.cle !== prochainJour?.cle);
+    const elements = [renderMessage(element.message)];
+
+    if (finDuJour) {
+      elements.push(
+        <div
+          key={`separateur-${element.jour.cle}`}
+          aria-label={formaterSeparateurJour(element.jour, aujourdHui)}
+          className="flex shrink-0 items-center gap-3 py-1"
+        >
+          <span aria-hidden="true" className="h-px flex-1 bg-gray-200" />
+          <span className="rounded-full bg-gray-50 px-3 py-1 text-[11px] font-medium text-gray-500">
+            {formaterSeparateurJour(element.jour, aujourdHui)}
+          </span>
+          <span aria-hidden="true" className="h-px flex-1 bg-gray-200" />
+        </div>
+      );
+    }
+
+    return elements;
+  });
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -76,7 +162,7 @@ export default function ChatMessageThread({
         className="flex h-full min-h-0 flex-col-reverse gap-4 overflow-y-auto overscroll-contain p-4 sm:p-6"
       >
         {messages.length > 0
-          ? [...messages].reverse().map(renderMessage)
+          ? elementsMessages
           : contenuVide}
         {peutChargerPrecedents && (
           <div className="flex shrink-0 justify-center">
