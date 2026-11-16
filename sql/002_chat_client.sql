@@ -288,19 +288,16 @@ begin
         raise exception 'la date de lecture ne peut pas être modifiée avec le contenu';
     end if;
 
-    if v_contenu_modifie and v_supprime then
-        raise exception 'modification et suppression simultanées interdites';
+    if v_supprime then
+        -- La suppression prime sur tout changement concurrent du contenu.
+        new.contenu := old.contenu;
+        new.modifie_le := old.modifie_le;
+        new.supprime_le := now();
     elsif v_contenu_modifie then
         if new.supprime_le is distinct from old.supprime_le then
             raise exception 'marqueur de suppression invalide';
         end if;
         new.modifie_le := now();
-    else
-        if new.modifie_le is distinct from old.modifie_le
-           or new.supprime_le is null then
-            raise exception 'suppression logique invalide';
-        end if;
-        new.supprime_le := now();
     end if;
 
     return new;
