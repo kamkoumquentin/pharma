@@ -90,34 +90,43 @@ create policy discussion_messages_insertion
     );
 
 drop policy if exists discussion_messages_modification_pharmacie on public.discussion_messages;
-create policy discussion_messages_modification_pharmacie
+drop policy if exists discussion_messages_update_auteur on public.discussion_messages;
+create policy discussion_messages_update_auteur
     on public.discussion_messages
     for update
     to authenticated
     using (
-        auteur_role = 'pharmacie'
-        and supprime_le is null
+        supprime_le is null
         and cree_le > now() - interval '15 minutes'
         and exists (
             select 1
             from public.discussions d
             where d.id = discussion_id
-              and public.est_proprietaire_de_pharmacie(d.pharmacie_id)
+              and (
+                  (auteur_role = 'client'
+                      and d.utilisateur_id = public.current_utilisateur_id())
+                  or (auteur_role = 'pharmacie'
+                      and public.est_proprietaire_de_pharmacie(d.pharmacie_id))
+              )
         )
     )
     with check (
-        auteur_role = 'pharmacie'
-        and exists (
+        exists (
             select 1
             from public.discussions d
             where d.id = discussion_id
-              and public.est_proprietaire_de_pharmacie(d.pharmacie_id)
+              and (
+                  (auteur_role = 'client'
+                      and d.utilisateur_id = public.current_utilisateur_id())
+                  or (auteur_role = 'pharmacie'
+                      and public.est_proprietaire_de_pharmacie(d.pharmacie_id))
+              )
         )
     );
 
 -- Aucune politique INSERT/UPDATE/DELETE sur discussions.
--- Les UPDATE de discussion_messages sont réservés au propriétaire de la
--- pharmacie, pour ses propres messages récents (suppression logique comprise).
+-- Les UPDATE de discussion_messages sont réservés à l'auteur, dans sa propre
+-- discussion, pendant les 15 minutes suivant la création.
 
 -- ============================================================
 -- 3. Auteur imposé par le serveur et limite de messages
@@ -238,6 +247,14 @@ begin
     v_contenu_modifie := new.contenu is distinct from old.contenu;
     v_supprime := new.supprime_le is distinct from old.supprime_le;
 
+    if new.id is distinct from old.id
+       or new.discussion_id is distinct from old.discussion_id
+       or new.auteur_role is distinct from old.auteur_role
+       or new.id_medicament is distinct from old.id_medicament
+       or new.cree_le is distinct from old.cree_le then
+        raise exception 'les métadonnées du message ne peuvent pas être modifiées';
+    end if;
+
     if not v_contenu_modifie and not v_supprime then
         if new.modifie_le is distinct from old.modifie_le then
             raise exception 'modification de message invalide';
@@ -245,12 +262,16 @@ begin
         return new;
     end if;
 
-    if old.auteur_role <> 'pharmacie'
-       or not exists (
+    if not exists (
            select 1
            from public.discussions d
            where d.id = old.discussion_id
-             and public.est_proprietaire_de_pharmacie(d.pharmacie_id)
+             and (
+                 (old.auteur_role = 'client'
+                     and d.utilisateur_id = public.current_utilisateur_id())
+                 or (old.auteur_role = 'pharmacie'
+                     and public.est_proprietaire_de_pharmacie(d.pharmacie_id))
+             )
        ) then
         raise exception 'accès refusé';
     end if;
@@ -263,12 +284,8 @@ begin
         raise exception 'le délai de modification de 15 minutes est dépassé';
     end if;
 
-    if new.id is distinct from old.id
-       or new.discussion_id is distinct from old.discussion_id
-       or new.auteur_role is distinct from old.auteur_role
-       or new.id_medicament is distinct from old.id_medicament
-       or new.cree_le is distinct from old.cree_le then
-        raise exception 'les métadonnées du message ne peuvent pas être modifiées';
+    if new.lu_le is distinct from old.lu_le then
+        raise exception 'la date de lecture ne peut pas être modifiée avec le contenu';
     end if;
 
     if v_contenu_modifie and v_supprime then
@@ -521,8 +538,7 @@ revoke all on table public.discussion_messages from public, anon, authenticated;
 grant select, insert on table public.discussion_messages to authenticated;
 revoke update (contenu, modifie_le, supprime_le)
     on table public.discussion_messages from public, anon, authenticated;
-grant update (contenu, modifie_le, supprime_le)
-    on table public.discussion_messages to authenticated;
+grant update on table public.discussion_messages to authenticated;
 
 revoke all on function public.demander_a_pharmacie(bigint, bigint, text)
     from public, anon;
