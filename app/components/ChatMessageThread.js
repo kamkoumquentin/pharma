@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 const formateurJour = new Intl.DateTimeFormat("fr-FR", {
   timeZone: "Africa/Douala",
