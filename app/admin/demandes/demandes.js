@@ -335,6 +335,16 @@ export default function Demandes({
                     {discussion.non_lus_pharmacie}
                   </span>
                 )}
+                {discussion.alerte_modification_pharmacie && (
+                  <span
+                    role="img"
+                    aria-label="Un message a été modifié ou supprimé depuis votre dernière lecture"
+                    title="Un message a été modifié ou supprimé depuis votre dernière lecture"
+                    className="mt-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700"
+                  >
+                    <PencilSquareIcon className="h-3.5 w-3.5" />
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -398,6 +408,8 @@ export default function Demandes({
                     const estSupprime = Boolean(message.supprime_le);
                     const enEdition = messageEnEditionId === message.id;
                     const peutGerer = estModifiable(message);
+                    const messageSignale = discussionOuverte.alerte_modification_pharmacie
+                      && Boolean(message.modifie_le || message.supprime_le);
                     return (
                       <article
                         key={message.id}
@@ -409,7 +421,7 @@ export default function Demandes({
                             : estPharmacie
                               ? "rounded-br-md bg-emerald-600 text-white"
                               : "rounded-bl-md bg-teal-50 text-gray-800"
-                        }`}>
+                        } ${messageSignale ? "ring-2 ring-amber-400 ring-offset-1" : ""}`}>
                           {message.id_medicament !== null && !estSupprime && (
                             <span className={`mb-2 block rounded-lg px-2.5 py-1 text-xs font-semibold ${
                               estPharmacie ? "bg-white/15 text-emerald-50" : "bg-teal-100 text-teal-800"

@@ -75,7 +75,7 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
     const requete = (async () => {
       const { data, error } = await supabase
         .from("discussions")
-        .select("id, utilisateur_id, pharmacie_id, dernier_message_at, dernier_extrait, dernier_auteur_role, non_lus_client, non_lus_pharmacie, cree_le")
+        .select("id, utilisateur_id, pharmacie_id, dernier_message_at, dernier_extrait, dernier_auteur_role, non_lus_client, non_lus_pharmacie, alerte_modification_pharmacie, cree_le")
         .eq("pharmacie_id", pharmacieId)
         .order("dernier_message_at", { ascending: false, nullsFirst: false })
         .limit(50);
@@ -88,6 +88,9 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
         const fusionnee = evenementRecent?.revision > revisionAuDepart
           ? { ...discussion, ...evenementRecent.discussion }
           : discussion;
+        fusionnee.alerte_modification_pharmacie = Boolean(
+          fusionnee.alerte_modification_pharmacie
+        );
         if (
           marquagesReussisRef.current.has(discussion.id)
           && marquagesReussisRef.current.get(discussion.id) === fusionnee.dernier_message_at
@@ -518,12 +521,15 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
       const discussion = payload.new;
       if (!discussion?.id) return;
       revisionsRealtimeRef.current += 1;
-      lignesRealtimeRef.current.set(discussion.id, {
-        revision: revisionsRealtimeRef.current,
-        discussion,
-      });
+      const revision = revisionsRealtimeRef.current;
       const precedente = discussionsRef.current.find((item) => item.id === discussion.id);
-      const prochaine = { ...precedente, ...discussion };
+      const prochaine = {
+        ...precedente,
+        ...discussion,
+        alerte_modification_pharmacie: typeof discussion.alerte_modification_pharmacie === "boolean"
+          ? discussion.alerte_modification_pharmacie
+          : Boolean(precedente?.alerte_modification_pharmacie),
+      };
       const aMarqueLues = marquagesReussisRef.current.has(discussion.id);
       const dateDernierMessageMarquee = marquagesReussisRef.current.get(discussion.id);
       if (aMarqueLues && discussion.dernier_message_at === dateDernierMessageMarquee) {
@@ -531,6 +537,10 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
       } else if (aMarqueLues) {
         marquagesReussisRef.current.delete(discussion.id);
       }
+      lignesRealtimeRef.current.set(discussion.id, {
+        revision,
+        discussion: prochaine,
+      });
       const lignes = trierDiscussions([
         prochaine,
         ...discussionsRef.current.filter((item) => item.id !== discussion.id),

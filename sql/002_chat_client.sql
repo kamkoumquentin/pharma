@@ -315,24 +315,10 @@ create trigger discussion_messages_proteger_modification
 -- 4. Compteurs de non-lus et date du dernier message
 -- ============================================================
 
-create or replace function public.discussion_messages_apres_insertion()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-    update public.discussions
-    set dernier_message_at = new.cree_le,
-        non_lus_client = non_lus_client
-            + case when new.auteur_role = 'pharmacie' then 1 else 0 end,
-        non_lus_pharmacie = non_lus_pharmacie
-            + case when new.auteur_role = 'client' then 1 else 0 end
-    where id = new.discussion_id;
-
-    return null;
-end;
-$$;
+-- discussion_messages_apres_insertion() a été déplacée dans
+-- sql/004_corriger_apercu_discussions.sql, qui en est désormais la seule
+-- définition valable. Ne pas la redéfinir ici : toute nouvelle redéfinition
+-- risque d'écraser silencieusement la version à jour (aperçu des discussions).
 
 drop trigger if exists discussion_messages_apres_insertion
     on public.discussion_messages;
