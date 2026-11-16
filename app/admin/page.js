@@ -356,6 +356,8 @@ export default function Acceuil() {
         chargerMessages={demandes.chargerMessages}
         chargerMessagesPrecedents={demandes.chargerMessagesPrecedents}
         envoyerMessage={demandes.envoyerMessage}
+        modifierMessage={demandes.modifierMessage}
+        supprimerMessage={demandes.supprimerMessage}
         actualiser={demandes.actualiser}
         discussionOuverteId={discussionOuverteId}
         onOuvrirDiscussion={ouvrirDiscussion}

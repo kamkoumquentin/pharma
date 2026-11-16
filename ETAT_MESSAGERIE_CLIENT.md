@@ -54,9 +54,9 @@ Le badge global, le filtre « Non lus », la pastille de chaque discussion et le
 Le script définit :
 
 - `discussions`, avec l’utilisateur, la pharmacie, la date du dernier message et les compteurs `non_lus_client` / `non_lus_pharmacie` ;
-- `discussion_messages`, avec auteur, contenu (1 à 500 caractères), médicament éventuel, date et `lu_le` ;
+- `discussion_messages`, avec auteur, contenu (1 à 500 caractères), médicament éventuel, dates de création/lecture/modification et marqueur de suppression logique ;
 - une discussion unique par couple utilisateur/pharmacie ;
-- les politiques RLS de lecture et d’insertion, les fonctions et les triggers ;
+- les politiques RLS de lecture, insertion et modification restreinte, les fonctions et les triggers ;
 - la publication Realtime pour `discussions` et `discussion_messages` ;
 - les droits d’exécution des fonctions.
 
@@ -89,9 +89,15 @@ Le canal écoute `INSERT` et `UPDATE` sur `discussions`, ainsi que `INSERT` et `
 
 - `INSERT` / `UPDATE discussions` : fusionne `payload.new` localement, trie la liste et remonte la discussion en tête si son activité est la plus récente.
 - `INSERT discussion_messages` : ajoute localement le message seulement si cette discussion est ouverte ; sinon le message n’est pas chargé. La mise à jour du compteur vient de l’événement `UPDATE discussions`.
-- `UPDATE discussion_messages` : met à jour seulement `lu_le` dans le cache et le fil concernés.
+- `UPDATE discussion_messages` : fusionne tous les champs de la ligne dans le cache et le fil concernés, notamment `lu_le`, `modifie_le` et `supprime_le`.
 - Les messages reçus et les réponses optimistes sont dédoublonnés par identifiant.
 - Une reconnexion du canal recharge la liste des discussions. Les événements ordinaires ne déclenchent pas de relecture complète.
+
+### Modification et suppression logique côté pharmacie
+
+La pharmacie peut modifier ou supprimer logiquement l'un de ses messages dans les 15 minutes suivant sa création. L'édition met à jour `contenu` et renseigne `modifie_le`. La suppression renseigne `supprime_le` sans supprimer la ligne ; le message garde sa place dans le fil et son contenu est remplacé par « Message supprimé ». Un message supprimé n'est plus modifiable. La règle est vérifiée dans l'interface et imposée par RLS et un trigger SQL.
+
+Le canal Realtime transmet les mises à jour de la ligne aux abonnés de la discussion. Le dépôt ne contient pas l'interface client qui consomme `discussion_messages` ; le rendu du marqueur de suppression/modification côté client doit être vérifié dans le dépôt client concerné.
 
 Les relectures complètes intentionnelles sont le chargement initial, le bouton d’actualisation et la reconnexion Realtime. Le chargement initial du fil à l’ouverture, les pages précédentes et la recherche des nouveaux messages au retour sur une discussion sont des lectures ciblées, pas des relectures de toute la liste.
 

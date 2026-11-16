@@ -254,7 +254,7 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
     try {
       let requete = supabase
         .from("discussion_messages")
-        .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le, lu_le");
+        .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le, lu_le, modifie_le, supprime_le");
 
       if (estRafraichissement && cache.newestAt) {
         requete = requete
@@ -305,7 +305,7 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
     try {
       const { data, error } = await supabase
         .from("discussion_messages")
-        .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le, lu_le")
+        .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le, lu_le, modifie_le, supprime_le")
         .eq("discussion_id", discussionId)
         .lt("cree_le", curseur)
         .order("cree_le", { ascending: false })
@@ -345,6 +345,20 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
         message,
       ]));
       setPeutChargerPrecedents(prochain.hasOlder);
+    }
+  }, [fusionnerDansCache]);
+
+  const actualiserMessageCache = useCallback((discussionId, message) => {
+    if (
+      !cacheMessagesRef.current.has(discussionId)
+      && discussionOuverteRef.current !== discussionId
+    ) return;
+
+    fusionnerDansCache(discussionId, [message]);
+    if (discussionOuverteRef.current === discussionId) {
+      setMessages((precedents) => trierMessages(precedents.map((item) => (
+        item.id === message.id ? { ...item, ...message } : item
+      ))));
     }
   }, [fusionnerDansCache]);
 
@@ -388,7 +402,7 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
       const { data, error } = await supabase
         .from("discussion_messages")
         .insert({ discussion_id: discussionId, contenu: messageOptimiste.contenu })
-        .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le, lu_le")
+        .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le, lu_le, modifie_le, supprime_le")
         .single();
       if (error) throw error;
 
@@ -410,6 +424,45 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
       throw error;
     }
   }, [ajouterMessageCache, remplacerMessageCache]);
+
+  const modifierMessage = useCallback(async (discussionId, messageId, contenu) => {
+    const texte = contenu.trim();
+    if (!discussionId || !messageId || !texte) {
+      throw new Error("Un message et un contenu non vide sont requis.");
+    }
+
+    const { data, error } = await supabase
+      .from("discussion_messages")
+      .update({ contenu: texte, modifie_le: new Date().toISOString() })
+      .eq("discussion_id", discussionId)
+      .eq("id", messageId)
+      .is("supprime_le", null)
+      .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le, lu_le, modifie_le, supprime_le")
+      .single();
+    if (error) throw error;
+
+    actualiserMessageCache(discussionId, data);
+    return data;
+  }, [actualiserMessageCache]);
+
+  const supprimerMessage = useCallback(async (discussionId, messageId) => {
+    if (!discussionId || !messageId) {
+      throw new Error("Une discussion et un message sont requis.");
+    }
+
+    const { data, error } = await supabase
+      .from("discussion_messages")
+      .update({ supprime_le: new Date().toISOString() })
+      .eq("discussion_id", discussionId)
+      .eq("id", messageId)
+      .is("supprime_le", null)
+      .select("id, discussion_id, auteur_role, contenu, id_medicament, cree_le, lu_le, modifie_le, supprime_le")
+      .single();
+    if (error) throw error;
+
+    actualiserMessageCache(discussionId, data);
+    return data;
+  }, [actualiserMessageCache]);
 
   const viderCache = useCallback(() => {
     generationCacheRef.current += 1;
@@ -535,19 +588,8 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
         { event: "UPDATE", schema: "public", table: "discussion_messages" },
         (payload) => {
           const message = payload.new;
-          if (!message?.id) return;
-          const cache = cacheMessagesRef.current.get(message.discussion_id);
-          if (!cache) return;
-
-          const maj = cache.messages.map((item) => (
-            item.id === message.id ? { ...item, lu_le: message.lu_le } : item
-          ));
-          cacheMessagesRef.current.set(message.discussion_id, { ...cache, messages: maj });
-          if (discussionOuverteRef.current === message.discussion_id) {
-            setMessages((precedents) => precedents.map((item) => (
-              item.id === message.id ? { ...item, lu_le: message.lu_le } : item
-            )));
-          }
+          if (!message?.id || !message.discussion_id) return;
+          actualiserMessageCache(message.discussion_id, message);
         }
       )
       .subscribe((status, error) => {
@@ -566,7 +608,14 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
       actif = false;
       supabase.removeChannel(channel);
     };
-  }, [pharmacieId, chargerDiscussions, ajouterMessageCache, chargerNomsMedicaments, showToast]);
+  }, [
+    pharmacieId,
+    chargerDiscussions,
+    ajouterMessageCache,
+    actualiserMessageCache,
+    chargerNomsMedicaments,
+    showToast,
+  ]);
 
   const nonLus = useMemo(
     () => discussions.reduce((total, discussion) => total + (discussion.non_lus_pharmacie || 0), 0),
@@ -606,6 +655,8 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
     chargerMessages,
     chargerMessagesPrecedents,
     envoyerMessage,
+    modifierMessage,
+    supprimerMessage,
     viderCache,
   };
 }

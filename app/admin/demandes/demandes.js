@@ -1,7 +1,15 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
-import { ArrowLeftIcon, ArrowPathIcon, PaperAirplaneIcon } from "@heroicons/react/24/outline";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ArrowLeftIcon,
+  ArrowPathIcon,
+  CheckIcon,
+  PaperAirplaneIcon,
+  PencilSquareIcon,
+  TrashIcon,
+  XMarkIcon,
+} from "@heroicons/react/24/outline";
 import ChatMessageThread from "@/app/components/ChatMessageThread";
 
 const reponsesRapides = [
@@ -35,6 +43,8 @@ export default function Demandes({
   chargerMessages,
   chargerMessagesPrecedents,
   envoyerMessage: envoyerMessageEnMemoire,
+  modifierMessage: modifierMessageEnMemoire,
+  supprimerMessage: supprimerMessageEnMemoire,
   actualiser,
   discussionOuverteId,
   onOuvrirDiscussion,
@@ -43,7 +53,22 @@ export default function Demandes({
   const [contenu, setContenu] = useState("");
   const [envoi, setEnvoi] = useState(false);
   const [erreurEnvoi, setErreurEnvoi] = useState("");
+  const [messageEnEditionId, setMessageEnEditionId] = useState(null);
+  const [contenuEdition, setContenuEdition] = useState("");
+  const [messageEnActionId, setMessageEnActionId] = useState(null);
+  const [erreurActionMessage, setErreurActionMessage] = useState("");
+  const [erreurActionMessageId, setErreurActionMessageId] = useState(null);
+  const [tempsCourant, setTempsCourant] = useState(0);
   const discussionOuverte = discussions.find((discussion) => discussion.id === discussionOuverteId);
+  const estModifiable = (message) => {
+    const creeLe = new Date(message.cree_le).getTime();
+    return message.auteur_role === "pharmacie"
+      && !message.supprime_le
+      && !message.envoiStatut
+      && Number.isFinite(creeLe)
+      && tempsCourant >= creeLe
+      && tempsCourant < creeLe + 15 * 60 * 1000;
+  };
   const discussionsFiltrees = useMemo(
     () => filtreNonLus
       ? discussions.filter((discussion) => discussion.non_lus_pharmacie > 0)
@@ -51,9 +76,36 @@ export default function Demandes({
     [discussions, filtreNonLus]
   );
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setTempsCourant(Date.now()), 0);
+    return () => window.clearTimeout(timer);
+  }, [messages]);
+
+  useEffect(() => {
+    if (!tempsCourant) return undefined;
+    const changements = messages
+      .filter((message) => message.auteur_role === "pharmacie" && !message.supprime_le)
+      .flatMap((message) => {
+        const creeLe = new Date(message.cree_le).getTime();
+        return [creeLe, creeLe + 15 * 60 * 1000];
+      })
+      .filter((changement) => Number.isFinite(changement) && changement > Date.now());
+    if (changements.length === 0) return undefined;
+
+    const timer = window.setTimeout(
+      () => setTempsCourant(Date.now()),
+      Math.max(0, Math.min(...changements) - Date.now() + 1)
+    );
+    return () => window.clearTimeout(timer);
+  }, [messages, tempsCourant]);
+
   const choisirDiscussion = useCallback((discussionId) => {
     setContenu("");
     setErreurEnvoi("");
+    setMessageEnEditionId(null);
+    setContenuEdition("");
+    setErreurActionMessage("");
+    setErreurActionMessageId(null);
     onOuvrirDiscussion(discussionId);
   }, [onOuvrirDiscussion]);
 
@@ -90,6 +142,58 @@ export default function Demandes({
       setErreurEnvoi("Impossible d'envoyer le message. Réessayez.");
     } finally {
       setEnvoi(false);
+    }
+  };
+
+  const demarrerModification = (message) => {
+    setMessageEnEditionId(message.id);
+    setContenuEdition(message.contenu);
+    setErreurActionMessage("");
+    setErreurActionMessageId(null);
+  };
+
+  const annulerModification = () => {
+    setMessageEnEditionId(null);
+    setContenuEdition("");
+    setErreurActionMessage("");
+    setErreurActionMessageId(null);
+  };
+
+  const enregistrerModification = async (message) => {
+    const texte = contenuEdition.trim();
+    if (!texte || messageEnActionId) return;
+
+    setMessageEnActionId(message.id);
+    setErreurActionMessage("");
+    try {
+      await modifierMessageEnMemoire(discussionOuverteId, message.id, texte);
+      annulerModification();
+    } catch (error) {
+      console.error("Erreur lors de la modification du message :", error);
+      setErreurActionMessage("Impossible de modifier ce message. Réessayez.");
+      setErreurActionMessageId(message.id);
+    } finally {
+      setMessageEnActionId(null);
+    }
+  };
+
+  const supprimerMessage = async (message) => {
+    if (
+      messageEnActionId
+      || !window.confirm("Supprimer ce message ? Il restera visible comme supprimé dans la discussion.")
+    ) return;
+
+    setMessageEnActionId(message.id);
+    setErreurActionMessage("");
+    try {
+      await supprimerMessageEnMemoire(discussionOuverteId, message.id);
+      if (messageEnEditionId === message.id) annulerModification();
+    } catch (error) {
+      console.error("Erreur lors de la suppression du message :", error);
+      setErreurActionMessage("Impossible de supprimer ce message. Réessayez.");
+      setErreurActionMessageId(message.id);
+    } finally {
+      setMessageEnActionId(null);
     }
   };
 
@@ -291,32 +395,83 @@ export default function Demandes({
                   label="Fil des messages de la demande"
                   renderMessage={(message) => {
                     const estPharmacie = message.auteur_role === "pharmacie";
+                    const estSupprime = Boolean(message.supprime_le);
+                    const enEdition = messageEnEditionId === message.id;
+                    const peutGerer = estModifiable(message);
                     return (
                       <article
                         key={message.id}
-                        className={`flex shrink-0 ${estPharmacie ? "justify-end" : "justify-start"}`}
+                        className={`group flex shrink-0 focus-within:z-10 ${estPharmacie ? "justify-end" : "justify-start"}`}
                       >
-                        <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-                          estPharmacie
-                            ? "rounded-br-md bg-emerald-600 text-white"
-                            : "rounded-bl-md bg-teal-50 text-gray-800"
+                        <div className={`relative max-w-[85%] rounded-2xl px-4 py-3 ${
+                          estSupprime
+                            ? "rounded-br-md bg-gray-100 text-gray-500"
+                            : estPharmacie
+                              ? "rounded-br-md bg-emerald-600 text-white"
+                              : "rounded-bl-md bg-teal-50 text-gray-800"
                         }`}>
-                          {message.id_medicament !== null && (
+                          {message.id_medicament !== null && !estSupprime && (
                             <span className={`mb-2 block rounded-lg px-2.5 py-1 text-xs font-semibold ${
                               estPharmacie ? "bg-white/15 text-emerald-50" : "bg-teal-100 text-teal-800"
                             }`}>
                               Demande pour : {nomsMedicaments[message.id_medicament] || "Médicament"}
                             </span>
                           )}
-                          <p className="whitespace-pre-wrap break-words text-sm">{message.contenu}</p>
-                          <time
-                            dateTime={message.cree_le}
-                            className={`mt-1.5 block text-right text-[11px] ${
-                              estPharmacie ? "text-emerald-100" : "text-gray-500"
-                            }`}
-                          >
-                            {formaterDate(message.cree_le)}
-                          </time>
+                          {estSupprime ? (
+                            <p className="whitespace-pre-wrap break-words text-sm italic text-gray-500">
+                              Message supprimé
+                            </p>
+                          ) : enEdition ? (
+                            <div className="min-w-[min(70vw,20rem)] space-y-2">
+                              <textarea
+                                aria-label="Modifier le message"
+                                value={contenuEdition}
+                                onChange={(event) => {
+                                  setContenuEdition(event.target.value.slice(0, 500));
+                                  setErreurActionMessage("");
+                                  setErreurActionMessageId(null);
+                                }}
+                                maxLength={500}
+                                rows={3}
+                                className="block w-full resize-y rounded-lg border border-white/40 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-emerald-200"
+                              />
+                              {erreurActionMessage && (
+                                <p role="alert" className="text-xs text-rose-100">
+                                  {erreurActionMessage}
+                                </p>
+                              )}
+                              <div className="flex justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={annulerModification}
+                                  disabled={messageEnActionId === message.id}
+                                  aria-label="Annuler la modification"
+                                  className="rounded-md p-1.5 text-emerald-50 transition hover:bg-white/15 disabled:opacity-50"
+                                >
+                                  <XMarkIcon className="h-4 w-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => enregistrerModification(message)}
+                                  disabled={messageEnActionId === message.id || !contenuEdition.trim()}
+                                  aria-label="Enregistrer la modification"
+                                  className="rounded-md p-1.5 text-emerald-50 transition hover:bg-white/15 disabled:opacity-50"
+                                >
+                                  <CheckIcon className="h-4 w-4" />
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="whitespace-pre-wrap break-words text-sm">{message.contenu}</p>
+                          )}
+                          <div className={`mt-1.5 flex justify-end gap-1.5 text-[11px] ${
+                            estPharmacie && !estSupprime ? "text-emerald-100" : "text-gray-500"
+                          }`}>
+                            <time dateTime={message.cree_le}>{formaterDate(message.cree_le)}</time>
+                            {message.modifie_le && !estSupprime && (
+                              <span className="italic">modifié</span>
+                            )}
+                          </div>
                           {message.envoiStatut === "envoi" && (
                             <span className="mt-1 block text-right text-[11px] opacity-80">
                               Envoi…
@@ -331,6 +486,34 @@ export default function Demandes({
                             >
                               Échec — réessayer
                             </button>
+                          )}
+                          {peutGerer && !enEdition && (
+                            <div className="absolute -top-2 right-1 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                              <button
+                                type="button"
+                                onClick={() => demarrerModification(message)}
+                                aria-label="Modifier le message"
+                                title="Modifier"
+                                className="rounded-full border border-emerald-100 bg-white p-1.5 text-gray-500 shadow-sm transition hover:text-emerald-700 focus:opacity-100"
+                              >
+                                <PencilSquareIcon className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => supprimerMessage(message)}
+                                disabled={messageEnActionId === message.id}
+                                aria-label="Supprimer le message"
+                                title="Supprimer"
+                                className="rounded-full border border-rose-100 bg-white p-1.5 text-gray-500 shadow-sm transition hover:text-rose-600 focus:opacity-100 disabled:opacity-50"
+                              >
+                                <TrashIcon className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          )}
+                          {erreurActionMessage && !enEdition && erreurActionMessageId === message.id && (
+                            <p role="alert" className="mt-1 text-right text-[11px] text-rose-100">
+                              {erreurActionMessage}
+                            </p>
                           )}
                         </div>
                       </article>

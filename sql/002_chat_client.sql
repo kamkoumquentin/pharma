@@ -34,8 +34,14 @@ create table if not exists public.discussion_messages (
     id_medicament bigint
         references public.medicaments(id) on delete set null,
     cree_le timestamptz not null default now(),
-    lu_le timestamptz
+    lu_le timestamptz,
+    modifie_le timestamptz,
+    supprime_le timestamptz
 );
+
+alter table public.discussion_messages
+    add column if not exists modifie_le timestamptz,
+    add column if not exists supprime_le timestamptz;
 
 create index if not exists discussion_messages_discussion_cree_idx
     on public.discussion_messages (discussion_id, cree_le);
@@ -83,8 +89,35 @@ create policy discussion_messages_insertion
         )
     );
 
+drop policy if exists discussion_messages_modification_pharmacie on public.discussion_messages;
+create policy discussion_messages_modification_pharmacie
+    on public.discussion_messages
+    for update
+    to authenticated
+    using (
+        auteur_role = 'pharmacie'
+        and supprime_le is null
+        and cree_le > now() - interval '15 minutes'
+        and exists (
+            select 1
+            from public.discussions d
+            where d.id = discussion_id
+              and public.est_proprietaire_de_pharmacie(d.pharmacie_id)
+        )
+    )
+    with check (
+        auteur_role = 'pharmacie'
+        and exists (
+            select 1
+            from public.discussions d
+            where d.id = discussion_id
+              and public.est_proprietaire_de_pharmacie(d.pharmacie_id)
+        )
+    );
+
 -- Aucune politique INSERT/UPDATE/DELETE sur discussions.
--- Aucune politique UPDATE/DELETE sur discussion_messages.
+-- Les UPDATE de discussion_messages sont réservés au propriétaire de la
+-- pharmacie, pour ses propres messages récents (suppression logique comprise).
 
 -- ============================================================
 -- 3. Auteur imposé par le serveur et limite de messages
@@ -192,6 +225,77 @@ create trigger discussion_messages_avant_insertion
     before insert on public.discussion_messages
     for each row
     execute function public.discussion_messages_avant_insertion();
+
+create or replace function public.discussion_messages_proteger_modification()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+declare
+    v_contenu_modifie boolean;
+    v_supprime boolean;
+begin
+    v_contenu_modifie := new.contenu is distinct from old.contenu;
+    v_supprime := new.supprime_le is distinct from old.supprime_le;
+
+    if not v_contenu_modifie and not v_supprime then
+        if new.modifie_le is distinct from old.modifie_le then
+            raise exception 'modification de message invalide';
+        end if;
+        return new;
+    end if;
+
+    if old.auteur_role <> 'pharmacie'
+       or not exists (
+           select 1
+           from public.discussions d
+           where d.id = old.discussion_id
+             and public.est_proprietaire_de_pharmacie(d.pharmacie_id)
+       ) then
+        raise exception 'accès refusé';
+    end if;
+
+    if old.supprime_le is not null then
+        raise exception 'un message supprimé ne peut plus être modifié';
+    end if;
+
+    if old.cree_le <= now() - interval '15 minutes' then
+        raise exception 'le délai de modification de 15 minutes est dépassé';
+    end if;
+
+    if new.id is distinct from old.id
+       or new.discussion_id is distinct from old.discussion_id
+       or new.auteur_role is distinct from old.auteur_role
+       or new.id_medicament is distinct from old.id_medicament
+       or new.cree_le is distinct from old.cree_le then
+        raise exception 'les métadonnées du message ne peuvent pas être modifiées';
+    end if;
+
+    if v_contenu_modifie and v_supprime then
+        raise exception 'modification et suppression simultanées interdites';
+    elsif v_contenu_modifie then
+        if new.supprime_le is distinct from old.supprime_le then
+            raise exception 'marqueur de suppression invalide';
+        end if;
+        new.modifie_le := now();
+    else
+        if new.modifie_le is distinct from old.modifie_le
+           or new.supprime_le is null then
+            raise exception 'suppression logique invalide';
+        end if;
+        new.supprime_le := now();
+    end if;
+
+    return new;
+end;
+$$;
+
+drop trigger if exists discussion_messages_proteger_modification
+    on public.discussion_messages;
+create trigger discussion_messages_proteger_modification
+    before update on public.discussion_messages
+    for each row
+    execute function public.discussion_messages_proteger_modification();
 
 -- ============================================================
 -- 4. Compteurs de non-lus et date du dernier message
@@ -415,6 +519,10 @@ grant select on table public.discussions to authenticated;
 
 revoke all on table public.discussion_messages from public, anon, authenticated;
 grant select, insert on table public.discussion_messages to authenticated;
+revoke update (contenu, modifie_le, supprime_le)
+    on table public.discussion_messages from public, anon, authenticated;
+grant update (contenu, modifie_le, supprime_le)
+    on table public.discussion_messages to authenticated;
 
 revoke all on function public.demander_a_pharmacie(bigint, bigint, text)
     from public, anon;
@@ -431,6 +539,8 @@ grant execute on function public.purger_discussions(integer) to service_role;
 revoke all on function public.discussion_messages_avant_insertion()
     from public, anon, authenticated;
 revoke all on function public.discussion_messages_apres_insertion()
+    from public, anon, authenticated;
+revoke all on function public.discussion_messages_proteger_modification()
     from public, anon, authenticated;
 
 -- ============================================================
