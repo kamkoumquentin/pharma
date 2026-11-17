@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { EnvelopeIcon, LockClosedIcon, EyeIcon, EyeSlashIcon } from "@heroicons/react/24/solid";
+import { EnvelopeIcon, LockClosedIcon, EyeIcon, EyeSlashIcon, KeyIcon, XMarkIcon, ArrowPathIcon } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
 import { useToast } from "@/app/components/Toast";
 import OtpModal from "@/app/components/OtpModal";
@@ -15,8 +15,44 @@ export default function Connexion() {
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [pendingEmail, setPendingEmail] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
   const navigate = useRouter();
   const showToast = useToast();
+
+  const handleOuvrirResetModal = () => {
+    setResetEmail(tab.email.trim().toLowerCase());
+    setShowResetModal(true);
+  };
+
+  const handleSendResetLink = async (e) => {
+    e.preventDefault();
+    const emailToUse = resetEmail.trim().toLowerCase();
+    if (!emailToUse || emailToUse.length < 5 || !emailToUse.includes("@")) {
+      showToast("Veuillez saisir une adresse email valide.", "error");
+      return;
+    }
+
+    setResetLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(emailToUse, {
+        redirectTo: "https://pro.mediskip.space/admin/reinitialiser",
+      });
+
+      if (error) {
+        showToast(error.message || "Erreur lors de l'envoi de l'e-mail de réinitialisation.", "error");
+      } else {
+        setShowResetModal(false);
+        showToast(`Lien de réinitialisation envoyé à ${emailToUse} ! Vérifiez vos e-mails.`, "success");
+      }
+    } catch (err) {
+      console.error("Erreur reset password:", err);
+      showToast("Une erreur est survenue lors de l'envoi de l'e-mail.", "error");
+    } finally {
+      setResetLoading(false);
+    }
+  };
 
   const handleOtpSuccess = (session) => {
     setShowOtpModal(false);
@@ -165,6 +201,15 @@ export default function Connexion() {
                 )}
               </button>
             </div>
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={handleOuvrirResetModal}
+                className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 hover:underline transition cursor-pointer"
+              >
+                Mot de passe oublié ?
+              </button>
+            </div>
           </div>
 
           {/* Actions */}
@@ -197,6 +242,70 @@ export default function Connexion() {
         onSuccess={handleOtpSuccess}
         onClose={() => setShowOtpModal(false)}
       />
+
+      {/* Modal de demande de réinitialisation du mot de passe */}
+      {showResetModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-emerald-950/60 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-emerald-100 p-8 flex flex-col items-center relative transition-all duration-300">
+            <button
+              type="button"
+              onClick={() => setShowResetModal(false)}
+              className="absolute top-5 right-5 text-gray-400 hover:text-gray-600 transition p-1.5 rounded-full hover:bg-gray-100 cursor-pointer"
+            >
+              <XMarkIcon className="w-5 h-5" />
+            </button>
+
+            <div className="w-16 h-16 bg-gradient-to-tr from-emerald-500 to-teal-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-200 mb-5">
+              <KeyIcon className="w-9 h-9 text-white" />
+            </div>
+
+            <h2 className="text-xl font-bold text-gray-900 text-center">
+              Mot de passe oublié ?
+            </h2>
+            <p className="text-gray-500 text-xs text-center mt-2 px-2 leading-relaxed">
+              Saisissez l&apos;adresse email de votre pharmacie. Nous vous enverrons un lien sécurisé pour définir un nouveau mot de passe.
+            </p>
+
+            <form onSubmit={handleSendResetLink} className="w-full flex flex-col space-y-4 mt-6">
+              <div className="flex flex-col space-y-1.5">
+                <label htmlFor="reset-email" className="text-xs font-semibold text-emerald-800 tracking-wide uppercase px-1">
+                  Email de la pharmacie
+                </label>
+                <div className="relative">
+                  <EnvelopeIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-emerald-600/70" />
+                  <input
+                    id="reset-email"
+                    type="email"
+                    required
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                    placeholder="email@pharmacie.com"
+                    className="w-full h-12 pl-11 pr-4 bg-emerald-50/30 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 focus:bg-white outline-none transition font-sans text-gray-700 placeholder-gray-400 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowResetModal(false)}
+                  className="flex-1 h-11 border border-gray-200 hover:bg-gray-50 text-gray-600 font-semibold rounded-xl text-sm transition cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={resetLoading}
+                  className="flex-1 h-11 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold rounded-xl shadow-md shadow-emerald-600/20 active:scale-[0.98] transition text-sm disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
+                >
+                  {resetLoading && <ArrowPathIcon className="w-4 h-4 animate-spin" />}
+                  <span>{resetLoading ? "Envoi..." : "Envoyer le lien"}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );

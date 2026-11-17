@@ -120,6 +120,56 @@ export default function Acceuil() {
           }
         }
 
+        // Si aucun profil n'a été trouvé, tenter une auto-création à partir des métadonnées (ex: confirmation via lien e-mail)
+        if (!profile && !profError) {
+          const meta = user.user_metadata || {};
+          const nomPharma = meta.nom || meta.pharmacie_nom;
+
+          if (nomPharma) {
+            const pharmacieData = {
+              nom: String(nomPharma).trim(),
+              telephone: meta.telephone ? String(meta.telephone).trim() : "",
+              ville: meta.ville ? String(meta.ville).trim() : "",
+              emplacement: meta.emplacement ? String(meta.emplacement).trim() : null,
+              latitude: meta.latitude !== undefined && meta.latitude !== null ? parseFloat(meta.latitude) : 0,
+              longitude: meta.longitude !== undefined && meta.longitude !== null ? parseFloat(meta.longitude) : 0,
+              owner_id: user.id,
+              statut: "actif",
+              etat: "normal",
+              photo: null,
+            };
+
+            const { data: createdProfile, error: createError } = await supabase
+              .from("pharmacies")
+              .insert(pharmacieData)
+              .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude, statut, visible")
+              .single();
+
+            if (!createError && createdProfile) {
+              profile = createdProfile;
+              showToast("Votre pharmacie a été créée avec succès !", "success");
+            } else if (createError && createError.code === "23505") {
+              const { data: existingProfile } = await supabase
+                .from("pharmacies")
+                .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude, statut, visible")
+                .eq("owner_id", user.id)
+                .maybeSingle();
+              if (existingProfile) profile = existingProfile;
+            } else {
+              console.error("Échec de création automatique de la pharmacie :", createError);
+            }
+          } else {
+            // Utilisateur authentifié mais sans métadonnées de pharmacie
+            showToast("Votre compte est activé mais votre profil pharmacie est incomplet. Veuillez contacter le support ou compléter votre inscription.", "error");
+            await supabase.auth.signOut();
+            viderCacheDemandes();
+            viderCacheMessagerie();
+            localStorage.removeItem("token_pharmacie");
+            nav.push("/admin/connexion");
+            return;
+          }
+        }
+
         if (profError || !profile) {
           showToast("Accès interdit : cette interface est réservée aux pharmaciens.", "error");
           await supabase.auth.signOut();
