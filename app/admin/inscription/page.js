@@ -158,7 +158,7 @@ export default function Inscription() {
             latitude: parseFloat(tab.latitude),
             longitude: parseFloat(tab.longitude),
           },
-          emailRedirectTo: "https://pro.mediskip.space/admin",
+          emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || "https://auth.mediskip.space"}/admin`,
         },
       });
 

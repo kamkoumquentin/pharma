@@ -36,8 +36,9 @@ export default function Connexion() {
 
     setResetLoading(true);
     try {
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://auth.mediskip.space";
       const { error } = await supabase.auth.resetPasswordForEmail(emailToUse, {
-        redirectTo: "https://pro.mediskip.space/admin/reinitialiser",
+        redirectTo: `${siteUrl}/admin/reinitialiser`,
       });
 
       if (error) {
