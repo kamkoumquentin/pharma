@@ -13,6 +13,16 @@ import {
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
 import { useToast } from "@/app/components/Toast";
+import {
+  DISPONIBILITE_EN_STOCK,
+  DISPONIBILITE_RUPTURE,
+  basculerDisponibilite,
+  mettreAJourDisponibiliteOffre,
+  mettreAJourDisponibiliteLot,
+} from "@/app/lib/disponibiliteOffres.mjs";
+
+const DUREE_APPUI_LONG_MS = 450;
+const SEUIL_MOUVEMENT_PX = 10;
 
 export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAModifierConsommee }) {
   const [lignes, setLignes] = useState([]);
@@ -40,20 +50,44 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
   const [loadingMeds, setLoadingMeds] = useState(false);
   const [imageToEnlarge, setImageToEnlarge] = useState(null);
   const [imagePreviewError, setImagePreviewError] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [pendingToggleIds, setPendingToggleIds] = useState([]);
+  const [batchSaving, setBatchSaving] = useState(false);
+  const [isBatchRestockConfirmOpen, setIsBatchRestockConfirmOpen] = useState(false);
   const fileInputRef = useRef(null);
+  const longPressTimerRef = useRef(null);
+  const longPressOriginRef = useRef(null);
+  const suppressNextClickRef = useRef(false);
+
+  const selectionMode = selectedIds.length > 0;
+
+  const annulerAppuiLong = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressOriginRef.current = null;
+  };
+
+  useEffect(() => () => annulerAppuiLong(), []);
 
   useEffect(() => {
-    if (!imageToEnlarge) return;
+    if (!imageToEnlarge && !isBatchRestockConfirmOpen && selectedIds.length === 0) return;
 
     const handleEscape = (event) => {
-      if (event.key === "Escape") {
+      if (event.key !== "Escape") return;
+      if (imageToEnlarge) {
         setImageToEnlarge(null);
+      } else if (isBatchRestockConfirmOpen && !batchSaving) {
+        setIsBatchRestockConfirmOpen(false);
+      } else if (selectedIds.length > 0 && !batchSaving) {
+        setSelectedIds([]);
       }
     };
 
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [imageToEnlarge]);
+  }, [imageToEnlarge, isBatchRestockConfirmOpen, selectedIds.length, batchSaving]);
 
   const ouvrirApercuImage = (src, alt) => {
     setImagePreviewError(false);
@@ -81,6 +115,8 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
           disponibilite: item.disponibilite || "disponible"
         }));
         setLignes(produitsFormates);
+        const idsValides = new Set(produitsFormates.map((p) => p.id));
+        setSelectedIds((prev) => prev.filter((id) => idsValides.has(id)));
       }
     } catch (error) {
       console.error("Erreur lors du chargement des médicaments", error);
@@ -291,6 +327,168 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
     return matchNom && matchStatus;
   });
 
+  const selectedSet = new Set(selectedIds);
+  const tousFiltresSelectionnes =
+    produitsFiltres.length > 0 &&
+    produitsFiltres.every((produit) => selectedSet.has(produit.id));
+
+  const basculerSelectionLigne = (idOffre) => {
+    setSelectedIds((prev) =>
+      prev.includes(idOffre) ? prev.filter((id) => id !== idOffre) : [...prev, idOffre]
+    );
+  };
+
+  const basculerToutSelectionner = () => {
+    if (tousFiltresSelectionnes) {
+      const filtresSet = new Set(produitsFiltres.map((p) => p.id));
+      setSelectedIds((prev) => prev.filter((id) => !filtresSet.has(id)));
+      return;
+    }
+    const fusion = new Set(selectedIds);
+    for (const produit of produitsFiltres) {
+      fusion.add(produit.id);
+    }
+    setSelectedIds([...fusion]);
+  };
+
+  const basculerStockLigne = async (produit) => {
+    if (pendingToggleIds.includes(produit.id) || batchSaving) return;
+
+    const ancienneDispo =
+      produit.disponibilite === DISPONIBILITE_EN_STOCK
+        ? DISPONIBILITE_EN_STOCK
+        : DISPONIBILITE_RUPTURE;
+    const nouvelleDispo = basculerDisponibilite(ancienneDispo);
+
+    setLignes((prev) =>
+      prev.map((ligne) =>
+        ligne.id === produit.id ? { ...ligne, disponibilite: nouvelleDispo } : ligne
+      )
+    );
+    setPendingToggleIds((prev) => [...prev, produit.id]);
+
+    try {
+      await mettreAJourDisponibiliteOffre(supabase, {
+        idOffre: produit.id,
+        pharmacieId,
+        disponibilite: nouvelleDispo,
+      });
+    } catch (error) {
+      console.error("Erreur lors du changement de disponibilité :", error);
+      setLignes((prev) =>
+        prev.map((ligne) =>
+          ligne.id === produit.id ? { ...ligne, disponibilite: ancienneDispo } : ligne
+        )
+      );
+      showToast(
+        error?.message || "Impossible de mettre à jour la disponibilité.",
+        "error"
+      );
+    } finally {
+      setPendingToggleIds((prev) => prev.filter((id) => id !== produit.id));
+    }
+  };
+
+  const appliquerDisponibiliteLot = async (nouvelleDispo) => {
+    const idsCibles = [...new Set(selectedIds)];
+    if (idsCibles.length === 0 || batchSaving) return;
+
+    const ciblesSet = new Set(idsCibles);
+    const anciennesDispos = new Map(
+      lignes
+        .filter((ligne) => ciblesSet.has(ligne.id))
+        .map((ligne) => [ligne.id, ligne.disponibilite])
+    );
+
+    setBatchSaving(true);
+    setLignes((prev) =>
+      prev.map((ligne) =>
+        ciblesSet.has(ligne.id) ? { ...ligne, disponibilite: nouvelleDispo } : ligne
+      )
+    );
+
+    try {
+      const updatedIds = await mettreAJourDisponibiliteLot(supabase, {
+        idsOffres: idsCibles,
+        pharmacieId,
+        disponibilite: nouvelleDispo,
+      });
+      const updatedSet = new Set(updatedIds);
+
+      if (updatedSet.size < idsCibles.length) {
+        setLignes((prev) =>
+          prev.map((ligne) =>
+            ciblesSet.has(ligne.id) && !updatedSet.has(ligne.id)
+              ? { ...ligne, disponibilite: anciennesDispos.get(ligne.id) ?? ligne.disponibilite }
+              : ligne
+          )
+        );
+        showToast("Certaines offres n'ont pas pu être mises à jour.", "error");
+      } else {
+        showToast(
+          nouvelleDispo === DISPONIBILITE_RUPTURE
+            ? `${updatedSet.size} médicament${updatedSet.size > 1 ? "s" : ""} marqué${updatedSet.size > 1 ? "s" : ""} en rupture.`
+            : `${updatedSet.size} médicament${updatedSet.size > 1 ? "s" : ""} remis en stock.`,
+          "success"
+        );
+      }
+
+      setSelectedIds([]);
+      setIsBatchRestockConfirmOpen(false);
+    } catch (error) {
+      console.error("Erreur lors de la mise à jour en lot :", error);
+      setLignes((prev) =>
+        prev.map((ligne) =>
+          ciblesSet.has(ligne.id)
+            ? { ...ligne, disponibilite: anciennesDispos.get(ligne.id) ?? ligne.disponibilite }
+            : ligne
+        )
+      );
+      showToast(
+        error?.message || "Impossible de mettre à jour les offres sélectionnées.",
+        "error"
+      );
+    } finally {
+      setBatchSaving(false);
+    }
+  };
+
+  const gererPointerDownLigne = (event, idOffre) => {
+    if (event.button !== undefined && event.button !== 0) return;
+    if (selectionMode || batchSaving) return;
+    if (event.target.closest("button, input, select, a, [role='switch']")) return;
+
+    annulerAppuiLong();
+    longPressOriginRef.current = { x: event.clientX, y: event.clientY };
+    longPressTimerRef.current = setTimeout(() => {
+      suppressNextClickRef.current = true;
+      setSelectedIds((prev) => (prev.includes(idOffre) ? prev : [...prev, idOffre]));
+      longPressTimerRef.current = null;
+      longPressOriginRef.current = null;
+    }, DUREE_APPUI_LONG_MS);
+  };
+
+  const gererPointerMoveLigne = (event) => {
+    if (!longPressTimerRef.current || !longPressOriginRef.current) return;
+    const distance = Math.hypot(
+      event.clientX - longPressOriginRef.current.x,
+      event.clientY - longPressOriginRef.current.y
+    );
+    if (distance > SEUIL_MOUVEMENT_PX) {
+      annulerAppuiLong();
+    }
+  };
+
+  const gererClicLigne = (event, idOffre) => {
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
+    if (!selectionMode || batchSaving) return;
+    if (event.target.closest("button, input, select, a, [role='switch']")) return;
+    basculerSelectionLigne(idOffre);
+  };
+
   return (
     <div className="flex flex-col h-full space-y-6">
       
@@ -332,6 +530,63 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
         </div>
       </div>
 
+      {/* Barre d'action en mode sélection multiple */}
+      {selectionMode && (
+        <div
+          role="region"
+          aria-label="Actions de sélection multiple"
+          className="sticky top-0 z-20 bg-emerald-950 text-white rounded-2xl px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 shadow-lg"
+        >
+          <div className="flex items-center gap-3">
+            <span className="inline-flex items-center justify-center min-w-7 h-7 px-2 rounded-full bg-emerald-500 text-white text-xs font-bold">
+              {selectedIds.length}
+            </span>
+            <span className="text-sm font-semibold">
+              {selectedIds.length === 1
+                ? "1 médicament sélectionné"
+                : `${selectedIds.length} médicaments sélectionnés`}
+            </span>
+            <button
+              type="button"
+              onClick={basculerToutSelectionner}
+              disabled={batchSaving}
+              className="text-xs font-semibold text-emerald-200 hover:text-white underline underline-offset-2 cursor-pointer disabled:opacity-50"
+            >
+              {tousFiltresSelectionnes ? "Tout désélectionner" : "Tout sélectionner"}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => appliquerDisponibiliteLot(DISPONIBILITE_RUPTURE)}
+              disabled={batchSaving}
+              className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition cursor-pointer disabled:opacity-50"
+            >
+              Marquer en rupture
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsBatchRestockConfirmOpen(true)}
+              disabled={batchSaving}
+              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition cursor-pointer disabled:opacity-50"
+            >
+              Remettre en stock
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedIds([])}
+              disabled={batchSaving}
+              aria-label="Annuler la sélection"
+              title="Annuler la sélection"
+              className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition cursor-pointer disabled:opacity-50"
+            >
+              <XMarkIcon className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Tableau ou vue vide */}
       <div className="bg-white rounded-2xl border border-gray-200/60 overflow-hidden flex-1 flex flex-col shadow-sm">
         {loading && lignes.length === 0 ? (
@@ -356,16 +611,57 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200/60 text-gray-500 font-semibold text-xs uppercase tracking-wider">
+                  {selectionMode && (
+                    <th className="py-4 pl-6 pr-2 w-10">
+                      <input
+                        type="checkbox"
+                        checked={tousFiltresSelectionnes}
+                        onChange={basculerToutSelectionner}
+                        aria-label="Tout sélectionner"
+                        className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                      />
+                    </th>
+                  )}
                   <th className="py-4 px-6">Aperçu</th>
                   <th className="py-4 px-6">Nom Médicament</th>
                   <th className="py-4 px-6">Prix Unitaire</th>
-                  <th className="py-4 px-6">Disponibilité</th>
+                  <th className="py-4 px-6">En stock</th>
                   <th className="py-4 px-6 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 text-sm text-gray-600 font-sans">
-                {produitsFiltres.map((produit) => (
-                  <tr key={produit.id} className="hover:bg-gray-50/50 transition duration-150">
+                {produitsFiltres.map((produit) => {
+                  const estEnStock = produit.disponibilite === DISPONIBILITE_EN_STOCK;
+                  const estEnCours = pendingToggleIds.includes(produit.id);
+                  const estSelectionne = selectedSet.has(produit.id);
+
+                  return (
+                  <tr
+                    key={produit.id}
+                    onPointerDown={(event) => gererPointerDownLigne(event, produit.id)}
+                    onPointerMove={gererPointerMoveLigne}
+                    onPointerUp={annulerAppuiLong}
+                    onPointerCancel={annulerAppuiLong}
+                    onPointerLeave={annulerAppuiLong}
+                    onClick={(event) => gererClicLigne(event, produit.id)}
+                    className={`transition duration-150 select-none ${
+                      estSelectionne
+                        ? "bg-emerald-50/70 hover:bg-emerald-50"
+                        : "hover:bg-gray-50/50"
+                    } ${selectionMode ? "cursor-pointer" : ""}`}
+                  >
+                    {selectionMode && (
+                      <td className="py-3.5 pl-6 pr-2">
+                        <input
+                          type="checkbox"
+                          checked={estSelectionne}
+                          onChange={() => basculerSelectionLigne(produit.id)}
+                          onClick={(event) => event.stopPropagation()}
+                          aria-label={`Sélectionner ${produit.nom}`}
+                          className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                        />
+                      </td>
+                    )}
                     <td className="py-3.5 px-6">
                       <div className="w-11 h-11 bg-gray-50 border border-gray-200 rounded-xl overflow-hidden shadow-inner flex items-center justify-center">
                         {produit.image ? (
@@ -396,16 +692,36 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
                       {produit.prix.toLocaleString("fr-FR")} FCFA
                     </td>
                     <td className="py-3.5 px-6">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${
-                        produit.disponibilite === "disponible" 
-                          ? "bg-emerald-50 text-emerald-700 border border-emerald-100" 
-                          : "bg-rose-50 text-rose-700 border border-rose-100"
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
-                          produit.disponibilite === "disponible" ? "bg-emerald-500" : "bg-rose-500"
-                        }`}></span>
-                        {produit.disponibilite === "disponible" ? "En stock" : "Rupture"}
-                      </span>
+                      <div className="inline-flex items-center gap-3">
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={estEnStock}
+                          aria-label={`En stock : ${produit.nom}`}
+                          disabled={estEnCours || batchSaving}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            basculerStockLigne(produit);
+                          }}
+                          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 cursor-pointer disabled:opacity-60 ${
+                            estEnStock ? "bg-emerald-600" : "bg-rose-200"
+                          }`}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ${
+                              estEnStock ? "translate-x-5" : "translate-x-0"
+                            }`}
+                          />
+                        </button>
+                        <span
+                          className={`text-xs font-bold ${
+                            estEnStock ? "text-emerald-700" : "text-rose-700"
+                          }`}
+                        >
+                          {estEnStock ? "En stock" : "Rupture"}
+                        </span>
+                      </div>
                     </td>
                     <td className="py-3.5 px-6 text-right">
                       <div className="flex items-center justify-end gap-2.5">
@@ -435,7 +751,8 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -712,6 +1029,53 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {isBatchRestockConfirmOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !batchSaving) {
+              setIsBatchRestockConfirmOpen(false);
+            }
+          }}
+        >
+          <div className="absolute inset-0 bg-emerald-950/40 backdrop-blur-sm" />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="titre-confirm-remettre-stock"
+            className="relative bg-white w-full max-w-md rounded-2xl shadow-2xl border border-gray-100 p-6 z-10 animate-slide-in"
+          >
+            <h3
+              id="titre-confirm-remettre-stock"
+              className="font-bold text-gray-800 text-lg mb-2"
+            >
+              Remettre en stock ({selectedIds.length})
+            </h3>
+            <p className="text-sm text-gray-600 mb-6">
+              Les patients qui suivent ces médicaments seront prévenus
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsBatchRestockConfirmOpen(false)}
+                disabled={batchSaving}
+                className="px-5 py-2 border border-gray-200 rounded-xl text-xs font-semibold text-gray-500 hover:bg-gray-50 transition cursor-pointer disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={() => appliquerDisponibiliteLot(DISPONIBILITE_EN_STOCK)}
+                disabled={batchSaving}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/10 active:scale-[0.98] transition disabled:opacity-50 cursor-pointer"
+              >
+                {batchSaving ? "Mise à jour..." : "Confirmer"}
+              </button>
+            </div>
           </div>
         </div>
       )}
