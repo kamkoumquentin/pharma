@@ -39,11 +39,11 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess, onModifierOf
 
   const showToast = useToast();
 
-  // Charger la liste des médicaments enregistrés en base
+  // Charger la liste des médicaments ayant au moins une offre en pharmacie
   const chargerMedicaments = async () => {
     setLoadingMeds(true);
     try {
-      const { data, error } = await supabase.from("medicaments").select("*").order("nom", { ascending: true });
+      const { data, error } = await supabase.rpc("lister_medicaments_avec_offres");
       if (error) throw error;
       setMedsList(data || []);
     } catch (error) {

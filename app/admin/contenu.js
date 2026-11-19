@@ -8,7 +8,8 @@ import {
   XMarkIcon,
   PhotoIcon,
   ChevronDownIcon,
-  ArrowPathIcon
+  ArrowPathIcon,
+  TagIcon
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
 import { useToast } from "@/app/components/Toast";
@@ -31,6 +32,12 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
   const [editImageName, setEditImageName] = useState("");
   const [editImagePreview, setEditImagePreview] = useState(offreAModifier?.image || "");
   const [saving, setSaving] = useState(false);
+  const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
+  const [renameOffer, setRenameOffer] = useState(null);
+  const [nouveauNomMed, setNouveauNomMed] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [medsList, setMedsList] = useState([]);
+  const [loadingMeds, setLoadingMeds] = useState(false);
   const [imageToEnlarge, setImageToEnlarge] = useState(null);
   const [imagePreviewError, setImagePreviewError] = useState(false);
   const fileInputRef = useRef(null);
@@ -117,6 +124,77 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
     setIsEditModalOpen(false);
     if (offreAModifier && onOffreAModifierConsommee) onOffreAModifierConsommee();
   };
+
+  const chargerMedicaments = async () => {
+    setLoadingMeds(true);
+    try {
+      const { data, error } = await supabase.rpc("lister_medicaments_avec_offres");
+      if (error) throw error;
+      setMedsList(data || []);
+    } catch (error) {
+      console.error("Erreur lors du chargement des médicaments :", error);
+      showToast("Impossible de charger le catalogue de médicaments.", "error");
+    } finally {
+      setLoadingMeds(false);
+    }
+  };
+
+  const normaliserRecherche = (texte) =>
+    String(texte ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, " ");
+
+  const ouvrirEditionNom = (offre) => {
+    setRenameOffer(offre);
+    setNouveauNomMed(offre.nom || "");
+    setIsRenameModalOpen(true);
+    if (medsList.length === 0) {
+      chargerMedicaments();
+    }
+  };
+
+  const fermerEditionNom = () => {
+    setIsRenameModalOpen(false);
+    setRenameOffer(null);
+    setNouveauNomMed("");
+  };
+
+  const handleRenameSubmit = async (e) => {
+    e.preventDefault();
+    const nomNettoye = nouveauNomMed.trim();
+    if (!nomNettoye) {
+      showToast("Veuillez saisir le nom du médicament.", "error");
+      return;
+    }
+
+    setRenaming(true);
+    try {
+      const { error } = await supabase.rpc("changer_medicament_offre", {
+        p_id_offre: renameOffer.id,
+        p_nouveau_nom: nomNettoye,
+      });
+
+      if (error) throw error;
+
+      showToast("Nom du médicament mis à jour avec succès !", "success");
+      fermerEditionNom();
+      await Promise.all([chargerProduits(), chargerMedicaments()]);
+    } catch (error) {
+      console.error("Erreur lors du changement de médicament :", error);
+      showToast(error.message || "Erreur lors du changement de nom du médicament.", "error");
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const requeteNomNormalisee = normaliserRecherche(nouveauNomMed);
+  const suggestionsMedicaments = medsList.filter((med) => {
+    if (!requeteNomNormalisee) return true;
+    return normaliserRecherche(med.nom).includes(requeteNomNormalisee);
+  });
 
   const handleEditSubmit = async (e) => {
     e.preventDefault();
@@ -332,6 +410,15 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
                     <td className="py-3.5 px-6 text-right">
                       <div className="flex items-center justify-end gap-2.5">
                         <button
+                          type="button"
+                          onClick={() => ouvrirEditionNom(produit)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 border border-gray-200 text-gray-600 hover:text-emerald-700 hover:border-emerald-200 rounded-lg hover:bg-emerald-50/40 transition cursor-pointer text-xs font-semibold"
+                          title="Modifier le nom"
+                        >
+                          <TagIcon className="w-3.5 h-3.5" />
+                          <span>Modifier le nom</span>
+                        </button>
+                        <button
                           onClick={() => ouvrirEdition(produit)}
                           className="p-2 border border-gray-200 text-gray-600 hover:text-emerald-600 hover:border-emerald-200 rounded-lg hover:bg-emerald-50/10 transition cursor-pointer"
                           title="Modifier"
@@ -520,6 +607,108 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
                   className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/10 active:scale-[0.98] transition disabled:opacity-50 cursor-pointer"
                 >
                   {saving ? "Enregistrement..." : "Sauvegarder"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE MODIFICATION DU NOM (RÉAFFECTATION D'OFFRE) */}
+      {isRenameModalOpen && renameOffer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-emerald-950/40 backdrop-blur-sm"
+            onClick={fermerEditionNom}
+          ></div>
+
+          <div className="relative bg-white w-full max-w-md rounded-2xl shadow-2xl border border-gray-100 p-6 z-10 animate-slide-in">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-4 mb-4">
+              <h3 className="font-bold text-gray-800 text-lg">Modifier le nom du médicament</h3>
+              <button
+                type="button"
+                onClick={fermerEditionNom}
+                className="p-1.5 hover:bg-gray-100 rounded-lg transition text-gray-400 hover:text-gray-600 cursor-pointer"
+              >
+                <XMarkIcon className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleRenameSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                  Nom actuel
+                </label>
+                <input
+                  type="text"
+                  value={renameOffer.nom}
+                  disabled
+                  className="w-full h-11 px-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-400 outline-none cursor-not-allowed"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-1">
+                  Nouveau nom du médicament *
+                </label>
+                <input
+                  type="text"
+                  list="catalogue-medicaments-suggestions"
+                  value={nouveauNomMed}
+                  onChange={(e) => setNouveauNomMed(e.target.value)}
+                  required
+                  placeholder="Ex: Efferalgan 500mg, comprimés"
+                  className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm text-gray-700 outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition"
+                />
+                <datalist id="catalogue-medicaments-suggestions">
+                  {medsList.map((med) => (
+                    <option key={med.id} value={med.nom} />
+                  ))}
+                </datalist>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
+                  Suggestions du catalogue
+                </p>
+                {loadingMeds ? (
+                  <p className="text-xs text-gray-400 animate-pulse py-2">
+                    Chargement du catalogue...
+                  </p>
+                ) : suggestionsMedicaments.length === 0 ? (
+                  <p className="text-xs text-gray-400 py-2">
+                    Aucune correspondance existante : un nouveau médicament sera créé.
+                  </p>
+                ) : (
+                  <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100 bg-gray-50/50">
+                    {suggestionsMedicaments.slice(0, 50).map((med) => (
+                      <button
+                        key={med.id}
+                        type="button"
+                        onClick={() => setNouveauNomMed(med.nom)}
+                        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-800 transition cursor-pointer"
+                      >
+                        {med.nom}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t border-gray-100 pt-4 mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={fermerEditionNom}
+                  className="px-5 py-2 border border-gray-200 rounded-xl text-xs font-semibold text-gray-500 hover:bg-gray-50 transition cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={renaming}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/10 active:scale-[0.98] transition disabled:opacity-50 cursor-pointer"
+                >
+                  {renaming ? "Enregistrement..." : "Valider le nom"}
                 </button>
               </div>
             </form>
