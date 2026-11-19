@@ -27,21 +27,16 @@ const SEUIL_MOUVEMENT_PX = 10;
 export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAModifierConsommee }) {
   const [lignes, setLignes] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(offreAModifier?.nom || "");
   const [statusFilter, setStatusFilter] = useState("all"); // 'all', 'disponible', 'indisponible'
   const showToast = useToast();
 
-  // États pour la modal d'édition. Une demande de modification arrivant du
-  // formulaire d'ajout (offre déjà en catalogue) initialise la modal : le
-  // composant est remonté via sa clé, donc aucun effet de synchronisation.
-  const [isEditModalOpen, setIsEditModalOpen] = useState(Boolean(offreAModifier));
-  const [currentOffer, setCurrentOffer] = useState(offreAModifier || null);
-  const [editPrix, setEditPrix] = useState(offreAModifier?.prix ?? "");
-  const [editDispo, setEditDispo] = useState(offreAModifier?.disponibilite || "disponible");
-  const [editImage, setEditImage] = useState(null);
-  const [editImageName, setEditImageName] = useState("");
-  const [editImagePreview, setEditImagePreview] = useState(offreAModifier?.image || "");
-  const [saving, setSaving] = useState(false);
+  const [editingPriceId, setEditingPriceId] = useState(offreAModifier?.id ?? null);
+  const [editingPriceValue, setEditingPriceValue] = useState(
+    offreAModifier?.prix != null ? String(offreAModifier.prix) : ""
+  );
+  const [savingPriceIds, setSavingPriceIds] = useState([]);
+  const [uploadingImageIds, setUploadingImageIds] = useState([]);
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [renameOffer, setRenameOffer] = useState(null);
   const [nouveauNomMed, setNouveauNomMed] = useState("");
@@ -55,6 +50,9 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
   const [batchSaving, setBatchSaving] = useState(false);
   const [isBatchRestockConfirmOpen, setIsBatchRestockConfirmOpen] = useState(false);
   const fileInputRef = useRef(null);
+  const imageUploadTargetRef = useRef(null);
+  const priceInputRef = useRef(null);
+  const cancelPriceEditRef = useRef(false);
   const longPressTimerRef = useRef(null);
   const longPressOriginRef = useRef(null);
   const suppressNextClickRef = useRef(false);
@@ -145,20 +143,169 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
     }
   };
 
-  // Ouverture de la modal de modification
-  const ouvrirEdition = (offre) => {
-    setCurrentOffer(offre);
-    setEditPrix(offre.prix);
-    setEditDispo(offre.disponibilite);
-    setEditImage(null);
-    setEditImageName("");
-    setEditImagePreview(offre.image || "");
-    setIsEditModalOpen(true);
+  const consommerOffreAModifier = () => {
+    if (offreAModifier && onOffreAModifierConsommee) {
+      onOffreAModifierConsommee();
+    }
   };
 
-  const fermerEdition = () => {
-    setIsEditModalOpen(false);
-    if (offreAModifier && onOffreAModifierConsommee) onOffreAModifierConsommee();
+  useEffect(() => {
+    if (editingPriceId !== null) {
+      priceInputRef.current?.focus();
+      priceInputRef.current?.select();
+    }
+  }, [editingPriceId]);
+
+  const ouvrirEditionPrix = (produit) => {
+    if (savingPriceIds.includes(produit.id) || batchSaving) return;
+    cancelPriceEditRef.current = false;
+    setEditingPriceId(produit.id);
+    setEditingPriceValue(String(produit.prix ?? ""));
+  };
+
+  const annulerEditionPrix = () => {
+    cancelPriceEditRef.current = true;
+    setEditingPriceId(null);
+    setEditingPriceValue("");
+    consommerOffreAModifier();
+  };
+
+  const validerEditionPrix = async (produit) => {
+    if (cancelPriceEditRef.current) {
+      cancelPriceEditRef.current = false;
+      return;
+    }
+    if (editingPriceId !== produit.id) return;
+
+    const nouveauPrix = parseInt(editingPriceValue, 10);
+    setEditingPriceId(null);
+    setEditingPriceValue("");
+
+    if (!editingPriceValue || Number.isNaN(nouveauPrix) || nouveauPrix <= 0) {
+      showToast("Veuillez saisir un prix valide supérieur à 0", "error");
+      consommerOffreAModifier();
+      return;
+    }
+
+    if (nouveauPrix === produit.prix) {
+      consommerOffreAModifier();
+      return;
+    }
+
+    const ancienPrix = produit.prix;
+    setSavingPriceIds((prev) => [...prev, produit.id]);
+    setLignes((prev) =>
+      prev.map((ligne) =>
+        ligne.id === produit.id ? { ...ligne, prix: nouveauPrix } : ligne
+      )
+    );
+
+    try {
+      const { data, error } = await supabase
+        .from("offres")
+        .update({ prix: nouveauPrix })
+        .eq("id", produit.id)
+        .eq("id_pharmacie", pharmacieId)
+        .select("id");
+
+      if (error) throw error;
+      if (!Array.isArray(data) || data.length !== 1) {
+        throw new Error("La mise à jour du prix n'a touché aucune offre.");
+      }
+      showToast("Prix mis à jour !", "success");
+    } catch (error) {
+      console.error("Erreur mise à jour prix :", error);
+      setLignes((prev) =>
+        prev.map((ligne) =>
+          ligne.id === produit.id ? { ...ligne, prix: ancienPrix } : ligne
+        )
+      );
+      showToast(error?.message || "Erreur lors de la mise à jour du prix.", "error");
+    } finally {
+      setSavingPriceIds((prev) => prev.filter((id) => id !== produit.id));
+      consommerOffreAModifier();
+    }
+  };
+
+  const declencherUploadImage = (produit) => {
+    if (uploadingImageIds.includes(produit.id) || batchSaving) return;
+    imageUploadTargetRef.current = produit;
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+      fileInputRef.current.click();
+    }
+  };
+
+  const gererSelectionImageLigne = async (event) => {
+    const file = event.target.files?.[0];
+    const produit = imageUploadTargetRef.current;
+    imageUploadTargetRef.current = null;
+    if (!file || !produit) return;
+
+    const ancienneImage = produit.image || "";
+    const apercuLocal = URL.createObjectURL(file);
+
+    setUploadingImageIds((prev) => [...prev, produit.id]);
+    setLignes((prev) =>
+      prev.map((ligne) =>
+        ligne.id === produit.id ? { ...ligne, image: apercuLocal } : ligne
+      )
+    );
+
+    try {
+      const ext = file.name.split(".").pop();
+      const filename = `produits/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from("offres-images")
+        .upload(filename, file);
+
+      if (upErr) {
+        throw new Error(upErr.message || "le stockage a refusé l'envoi");
+      }
+
+      const { data: urlData } = supabase.storage
+        .from("offres-images")
+        .getPublicUrl(filename);
+      const imageUrl = urlData?.publicUrl || null;
+      if (!imageUrl) {
+        throw new Error("URL publique de l'image indisponible");
+      }
+
+      const { data, error: updateErr } = await supabase
+        .from("offres")
+        .update({ image: imageUrl })
+        .eq("id", produit.id)
+        .eq("id_pharmacie", pharmacieId)
+        .select("id");
+
+      if (updateErr) throw updateErr;
+      if (!Array.isArray(data) || data.length !== 1) {
+        throw new Error("La mise à jour de l'image n'a touché aucune offre.");
+      }
+
+      setLignes((prev) =>
+        prev.map((ligne) =>
+          ligne.id === produit.id ? { ...ligne, image: imageUrl } : ligne
+        )
+      );
+      showToast("Image mise à jour avec succès !", "success");
+    } catch (error) {
+      console.error("Erreur mise à jour image offre :", error);
+      setLignes((prev) =>
+        prev.map((ligne) =>
+          ligne.id === produit.id ? { ...ligne, image: ancienneImage } : ligne
+        )
+      );
+      showToast(
+        error?.message
+          ? `L'image n'a pas pu être enregistrée (${error.message}).`
+          : "Erreur lors de la mise à jour de l'image.",
+        "error"
+      );
+    } finally {
+      URL.revokeObjectURL(apercuLocal);
+      setUploadingImageIds((prev) => prev.filter((id) => id !== produit.id));
+    }
   };
 
   const chargerMedicaments = async () => {
@@ -231,91 +378,6 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
     if (!requeteNomNormalisee) return true;
     return normaliserRecherche(med.nom).includes(requeteNomNormalisee);
   });
-
-  const handleEditSubmit = async (e) => {
-    e.preventDefault();
-
-    if (!editPrix || parseFloat(editPrix) <= 0) {
-      showToast("Veuillez saisir un prix valide supérieur à 0", "error");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      let imageUrl = editImagePreview;
-      let erreurImage = null;
-      if (editImage) {
-        try {
-          const ext = editImage.name.split('.').pop();
-          const filename = `produits/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
-          const { error: upErr } = await supabase.storage
-            .from("offres-images")
-            .upload(filename, editImage);
-
-          if (upErr) {
-            console.warn("Envoi de l'image refusé par le stockage :", upErr);
-            erreurImage = upErr.message || "le stockage a refusé l'envoi";
-          } else {
-            const { data: urlData } = supabase.storage
-              .from("offres-images")
-              .getPublicUrl(filename);
-            const url = urlData?.publicUrl || null;
-            if (!url) {
-              erreurImage = "URL publique de l'image indisponible";
-              console.warn("Aucune URL publique pour", filename);
-            } else {
-              imageUrl = url;
-            }
-          }
-        } catch (storageErr) {
-          console.error("Erreur upload image offre:", storageErr);
-          erreurImage = storageErr?.message || "erreur inattendue pendant l'envoi";
-        }
-
-        if (erreurImage) {
-          console.warn("Image de l'offre non envoyée :", erreurImage);
-        }
-      }
-
-      const { error: updateErr } = await supabase
-        .from("offres")
-        .update({
-          prix: parseInt(editPrix, 10),
-          disponibilite: editDispo,
-          image: imageUrl,
-        })
-        .eq("id", currentOffer.id);
-
-      // Aucun fichier n'est supprimé : une photo peut être partagée entre
-      // plusieurs offres ; l'ancienne URL reste enregistrée si l'envoi a échoué.
-      if (updateErr) {
-        console.error("Erreur mise à jour offre :", updateErr);
-        showToast(
-          erreurImage
-            ? `L'image n'a pas pu être envoyée (${erreurImage}) et aucune modification n'a été enregistrée.`
-            : "Erreur lors de la mise à jour.",
-          "error"
-        );
-        return;
-      }
-
-      if (erreurImage) {
-        showToast(
-          `L'image n'a pas pu être envoyée (${erreurImage}) : prix et disponibilité enregistrés.`,
-          "info"
-        );
-      } else {
-        showToast("Médicament mis à jour avec succès !", "success");
-      }
-      fermerEdition();
-      chargerProduits();
-    } catch (error) {
-      console.error("Erreur mise à jour offre :", error);
-      showToast("Erreur lors de la mise à jour.", "error");
-    } finally {
-      setSaving(false);
-    }
-  };
 
   // Filtrage local pour réactivité et fluidité
   const produitsFiltres = lignes.filter((produit) => {
@@ -663,33 +725,92 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
                       </td>
                     )}
                     <td className="py-3.5 px-6">
-                      <div className="w-11 h-11 bg-gray-50 border border-gray-200 rounded-xl overflow-hidden shadow-inner flex items-center justify-center">
-                        {produit.image ? (
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              ouvrirApercuImage(produit.image, produit.nom);
-                            }}
-                            aria-label={`Agrandir l’image de ${produit.nom}`}
-                            className="h-full w-full cursor-zoom-in"
-                          >
-                            <img
-                              src={produit.image}
-                              alt={produit.nom}
-                              className="h-full w-full object-cover"
-                            />
-                          </button>
-                        ) : (
-                          <span className="text-[10px] text-gray-400">No Image</span>
-                        )}
+                      <div className="flex items-center gap-2">
+                        <div className="w-11 h-11 bg-gray-50 border border-gray-200 rounded-xl overflow-hidden shadow-inner flex items-center justify-center shrink-0">
+                          {produit.image ? (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                ouvrirApercuImage(produit.image, produit.nom);
+                              }}
+                              aria-label={`Agrandir l’image de ${produit.nom}`}
+                              className="h-full w-full cursor-zoom-in"
+                            >
+                              <img
+                                src={produit.image}
+                                alt={produit.nom}
+                                className="h-full w-full object-cover"
+                              />
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-gray-400">No Image</span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            declencherUploadImage(produit);
+                          }}
+                          disabled={uploadingImageIds.includes(produit.id) || batchSaving}
+                          title={produit.image ? "Changer l'image" : "Ajouter une image"}
+                          aria-label={`Changer l’image de ${produit.nom}`}
+                          className="p-1.5 border border-gray-200 text-gray-500 hover:text-emerald-600 hover:border-emerald-200 rounded-lg hover:bg-emerald-50/40 transition cursor-pointer disabled:opacity-50"
+                        >
+                          <PhotoIcon className={`w-4 h-4 ${uploadingImageIds.includes(produit.id) ? "animate-pulse text-emerald-600" : ""}`} />
+                        </button>
                       </div>
                     </td>
                     <td className="py-3.5 px-6 font-bold text-gray-800">
                       {produit.nom}
                     </td>
                     <td className="py-3.5 px-6 font-mono font-semibold text-gray-700">
-                      {produit.prix.toLocaleString("fr-FR")} FCFA
+                      {editingPriceId === produit.id ? (
+                        <div
+                          className="inline-flex items-center gap-1.5"
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <input
+                            ref={priceInputRef}
+                            type="number"
+                            min="1"
+                            value={editingPriceValue}
+                            onChange={(event) => setEditingPriceValue(event.target.value)}
+                            onBlur={() => validerEditionPrix(produit)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                validerEditionPrix(produit);
+                              } else if (event.key === "Escape") {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                annulerEditionPrix();
+                              }
+                            }}
+                            aria-label={`Prix unitaire pour ${produit.nom}`}
+                            className="w-24 h-9 px-2.5 border border-emerald-500 rounded-lg text-sm font-mono text-gray-800 bg-white outline-none ring-2 ring-emerald-500/20"
+                          />
+                          <span className="text-xs text-gray-500 font-sans">FCFA</span>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            ouvrirEditionPrix(produit);
+                          }}
+                          disabled={savingPriceIds.includes(produit.id) || batchSaving}
+                          title="Cliquer pour modifier le prix"
+                          className="group inline-flex items-center gap-1.5 px-2 py-1 -mx-2 rounded-lg hover:bg-emerald-50/60 hover:text-emerald-700 transition cursor-pointer disabled:opacity-50"
+                        >
+                          <span>{produit.prix.toLocaleString("fr-FR")} FCFA</span>
+                          <PencilIcon className="w-3.5 h-3.5 text-gray-300 group-hover:text-emerald-600 transition" />
+                        </button>
+                      )}
                     </td>
                     <td className="py-3.5 px-6">
                       <div className="inline-flex items-center gap-3">
@@ -733,13 +854,6 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
                         >
                           <TagIcon className="w-3.5 h-3.5" />
                           <span>Modifier le nom</span>
-                        </button>
-                        <button
-                          onClick={() => ouvrirEdition(produit)}
-                          className="p-2 border border-gray-200 text-gray-600 hover:text-emerald-600 hover:border-emerald-200 rounded-lg hover:bg-emerald-50/10 transition cursor-pointer"
-                          title="Modifier"
-                        >
-                          <PencilIcon className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => supprimerProduit(produit.id, produit.nom)}
@@ -797,139 +911,13 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
         </div>
       )}
 
-      {/* MODAL DE MODIFICATION */}
-      {isEditModalOpen && currentOffer && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          {/* Backdrop */}
-          <div 
-            className="absolute inset-0 bg-emerald-950/40 backdrop-blur-sm"
-            onClick={fermerEdition}
-          ></div>
-
-          {/* Modal Container */}
-          <div className="relative bg-white w-full max-w-md rounded-2xl shadow-2xl border border-gray-100 p-6 z-10 animate-slide-in">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-4 mb-4">
-              <h3 className="font-bold text-gray-800 text-lg">Modifier le médicament</h3>
-              <button 
-                onClick={fermerEdition}
-                className="p-1.5 hover:bg-gray-100 rounded-lg transition text-gray-400 hover:text-gray-600 cursor-pointer"
-              >
-                <XMarkIcon className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleEditSubmit} className="space-y-4">
-              {/* Nom (Désactivé) */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Nom du médicament</label>
-                <input 
-                  type="text" 
-                  value={currentOffer.nom} 
-                  disabled
-                  className="w-full h-11 px-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-400 outline-none cursor-not-allowed"
-                />
-              </div>
-
-              {/* Prix */}
-              <div>
-                <label className="block text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-1">Prix de vente (FCFA) *</label>
-                <input 
-                  type="number" 
-                  value={editPrix} 
-                  onChange={(e) => setEditPrix(e.target.value)}
-                  required
-                  placeholder="Ex: 1500"
-                  className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm text-gray-700 outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition"
-                />
-              </div>
-
-              {/* Disponibilité */}
-              <div>
-                <label className="block text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-1">Disponibilité</label>
-                <div className="relative">
-                  <select 
-                    value={editDispo} 
-                    onChange={(e) => setEditDispo(e.target.value)}
-                    className="w-full h-11 pl-3 pr-10 appearance-none border border-gray-200 rounded-xl text-sm text-gray-700 outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition cursor-pointer"
-                  >
-                    <option value="disponible">En Stock</option>
-                    <option value="indisponible">Rupture de stock</option>
-                  </select>
-                  <ChevronDownIcon className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                </div>
-              </div>
-
-              {/* Photo du produit */}
-              <div>
-                <label className="block text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-1">Modifier l'image</label>
-                <input 
-                  type="file" 
-                  accept="image/*"
-                  ref={fileInputRef}
-                  onChange={(e) => {
-                    const file = e.target.files[0];
-                    if (file) {
-                      setEditImage(file);
-                      setEditImageName(file.name);
-                      setEditImagePreview(URL.createObjectURL(file));
-                    }
-                  }}
-                  className="hidden"
-                />
-                {editImagePreview ? (
-                  <div className="relative border border-gray-200 rounded-xl p-3 bg-gray-50 flex items-center space-x-4">
-                    <div className="w-16 h-16 rounded-lg overflow-hidden border border-gray-200 bg-white flex-shrink-0 flex items-center justify-center">
-                      <img src={editImagePreview} alt="Aperçu médicament" className="w-full h-full object-cover" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-gray-700 truncate">
-                        {editImageName || "Image actuelle"}
-                      </p>
-                      <p className="text-[10px] text-gray-400">
-                        {editImage ? "Nouvelle image sélectionnée" : "Image existante"}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="px-3 py-1.5 border border-gray-200 hover:bg-gray-100 text-gray-600 rounded-lg text-xs font-semibold cursor-pointer transition"
-                    >
-                      Changer
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-full h-11 border border-dashed border-gray-300 rounded-xl flex items-center justify-center space-x-2 text-xs text-gray-500 hover:border-emerald-500 hover:bg-emerald-50/10 transition cursor-pointer"
-                  >
-                    <PhotoIcon className="w-5 h-5 text-emerald-600" />
-                    <span className="truncate max-w-[200px]">Remplacer l'image existante</span>
-                  </button>
-                )}
-              </div>
-
-              {/* Footer */}
-              <div className="border-t border-gray-100 pt-4 mt-6 flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={fermerEdition}
-                  className="px-5 py-2 border border-gray-200 rounded-xl text-xs font-semibold text-gray-500 hover:bg-gray-50 transition cursor-pointer"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/10 active:scale-[0.98] transition disabled:opacity-50 cursor-pointer"
-                >
-                  {saving ? "Enregistrement..." : "Sauvegarder"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <input
+        type="file"
+        accept="image/*"
+        ref={fileInputRef}
+        onChange={gererSelectionImageLigne}
+        className="hidden"
+      />
 
       {/* MODAL DE MODIFICATION DU NOM (RÉAFFECTATION D'OFFRE) */}
       {isRenameModalOpen && renameOffer && (
