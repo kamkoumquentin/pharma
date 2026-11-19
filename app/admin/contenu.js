@@ -31,11 +31,12 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
   const [statusFilter, setStatusFilter] = useState("all"); // 'all', 'disponible', 'indisponible'
   const showToast = useToast();
 
-  const [editingPriceId, setEditingPriceId] = useState(offreAModifier?.id ?? null);
-  const [editingPriceValue, setEditingPriceValue] = useState(
+  const [isPriceModalOpen, setIsPriceModalOpen] = useState(Boolean(offreAModifier));
+  const [priceOffer, setPriceOffer] = useState(offreAModifier || null);
+  const [nouveauPrix, setNouveauPrix] = useState(
     offreAModifier?.prix != null ? String(offreAModifier.prix) : ""
   );
-  const [savingPriceIds, setSavingPriceIds] = useState([]);
+  const [savingPrice, setSavingPrice] = useState(false);
   const [uploadingImageIds, setUploadingImageIds] = useState([]);
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [renameOffer, setRenameOffer] = useState(null);
@@ -51,8 +52,6 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
   const [isBatchRestockConfirmOpen, setIsBatchRestockConfirmOpen] = useState(false);
   const fileInputRef = useRef(null);
   const imageUploadTargetRef = useRef(null);
-  const priceInputRef = useRef(null);
-  const cancelPriceEditRef = useRef(false);
   const longPressTimerRef = useRef(null);
   const longPressOriginRef = useRef(null);
   const suppressNextClickRef = useRef(false);
@@ -149,62 +148,40 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
     }
   };
 
-  useEffect(() => {
-    if (editingPriceId !== null) {
-      priceInputRef.current?.focus();
-      priceInputRef.current?.select();
-    }
-  }, [editingPriceId]);
-
-  const ouvrirEditionPrix = (produit) => {
-    if (savingPriceIds.includes(produit.id) || batchSaving) return;
-    cancelPriceEditRef.current = false;
-    setEditingPriceId(produit.id);
-    setEditingPriceValue(String(produit.prix ?? ""));
+  const ouvrirEditionPrix = (offre) => {
+    setPriceOffer(offre);
+    setNouveauPrix(offre.prix != null ? String(offre.prix) : "");
+    setIsPriceModalOpen(true);
   };
 
-  const annulerEditionPrix = () => {
-    cancelPriceEditRef.current = true;
-    setEditingPriceId(null);
-    setEditingPriceValue("");
+  const fermerEditionPrix = () => {
+    setIsPriceModalOpen(false);
+    setPriceOffer(null);
+    setNouveauPrix("");
     consommerOffreAModifier();
   };
 
-  const validerEditionPrix = async (produit) => {
-    if (cancelPriceEditRef.current) {
-      cancelPriceEditRef.current = false;
-      return;
-    }
-    if (editingPriceId !== produit.id) return;
+  const handlePriceSubmit = async (e) => {
+    e.preventDefault();
+    if (!priceOffer) return;
 
-    const nouveauPrix = parseInt(editingPriceValue, 10);
-    setEditingPriceId(null);
-    setEditingPriceValue("");
-
-    if (!editingPriceValue || Number.isNaN(nouveauPrix) || nouveauPrix <= 0) {
-      showToast("Veuillez saisir un prix valide supérieur à 0", "error");
-      consommerOffreAModifier();
+    const prixValide = parseInt(nouveauPrix, 10);
+    if (!nouveauPrix || Number.isNaN(prixValide) || prixValide <= 0) {
+      showToast("Veuillez saisir un prix valide supérieur à 0.", "error");
       return;
     }
 
-    if (nouveauPrix === produit.prix) {
-      consommerOffreAModifier();
+    if (prixValide === priceOffer.prix) {
+      fermerEditionPrix();
       return;
     }
 
-    const ancienPrix = produit.prix;
-    setSavingPriceIds((prev) => [...prev, produit.id]);
-    setLignes((prev) =>
-      prev.map((ligne) =>
-        ligne.id === produit.id ? { ...ligne, prix: nouveauPrix } : ligne
-      )
-    );
-
+    setSavingPrice(true);
     try {
       const { data, error } = await supabase
         .from("offres")
-        .update({ prix: nouveauPrix })
-        .eq("id", produit.id)
+        .update({ prix: prixValide })
+        .eq("id", priceOffer.id)
         .eq("id_pharmacie", pharmacieId)
         .select("id");
 
@@ -212,18 +189,19 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
       if (!Array.isArray(data) || data.length !== 1) {
         throw new Error("La mise à jour du prix n'a touché aucune offre.");
       }
-      showToast("Prix mis à jour !", "success");
-    } catch (error) {
-      console.error("Erreur mise à jour prix :", error);
+
       setLignes((prev) =>
         prev.map((ligne) =>
-          ligne.id === produit.id ? { ...ligne, prix: ancienPrix } : ligne
+          ligne.id === priceOffer.id ? { ...ligne, prix: prixValide } : ligne
         )
       );
+      showToast("Prix du médicament mis à jour avec succès !", "success");
+      fermerEditionPrix();
+    } catch (error) {
+      console.error("Erreur mise à jour prix :", error);
       showToast(error?.message || "Erreur lors de la mise à jour du prix.", "error");
     } finally {
-      setSavingPriceIds((prev) => prev.filter((id) => id !== produit.id));
-      consommerOffreAModifier();
+      setSavingPrice(false);
     }
   };
 
@@ -767,50 +745,7 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
                       {produit.nom}
                     </td>
                     <td className="py-3.5 px-6 font-mono font-semibold text-gray-700">
-                      {editingPriceId === produit.id ? (
-                        <div
-                          className="inline-flex items-center gap-1.5"
-                          onPointerDown={(event) => event.stopPropagation()}
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          <input
-                            ref={priceInputRef}
-                            type="number"
-                            min="1"
-                            value={editingPriceValue}
-                            onChange={(event) => setEditingPriceValue(event.target.value)}
-                            onBlur={() => validerEditionPrix(produit)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                validerEditionPrix(produit);
-                              } else if (event.key === "Escape") {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                annulerEditionPrix();
-                              }
-                            }}
-                            aria-label={`Prix unitaire pour ${produit.nom}`}
-                            className="w-24 h-9 px-2.5 border border-emerald-500 rounded-lg text-sm font-mono text-gray-800 bg-white outline-none ring-2 ring-emerald-500/20"
-                          />
-                          <span className="text-xs text-gray-500 font-sans">FCFA</span>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onPointerDown={(event) => event.stopPropagation()}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            ouvrirEditionPrix(produit);
-                          }}
-                          disabled={savingPriceIds.includes(produit.id) || batchSaving}
-                          title="Cliquer pour modifier le prix"
-                          className="group inline-flex items-center gap-1.5 px-2 py-1 -mx-2 rounded-lg hover:bg-emerald-50/60 hover:text-emerald-700 transition cursor-pointer disabled:opacity-50"
-                        >
-                          <span>{produit.prix.toLocaleString("fr-FR")} FCFA</span>
-                          <PencilIcon className="w-3.5 h-3.5 text-gray-300 group-hover:text-emerald-600 transition" />
-                        </button>
-                      )}
+                      {produit.prix.toLocaleString("fr-FR")} FCFA
                     </td>
                     <td className="py-3.5 px-6">
                       <div className="inline-flex items-center gap-3">
@@ -854,6 +789,15 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
                         >
                           <TagIcon className="w-3.5 h-3.5" />
                           <span>Modifier le nom</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => ouvrirEditionPrix(produit)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 border border-gray-200 text-gray-600 hover:text-emerald-700 hover:border-emerald-200 rounded-lg hover:bg-emerald-50/40 transition cursor-pointer text-xs font-semibold"
+                          title="Modifier le prix"
+                        >
+                          <PencilIcon className="w-3.5 h-3.5" />
+                          <span>Modifier le prix</span>
                         </button>
                         <button
                           onClick={() => supprimerProduit(produit.id, produit.nom)}
@@ -1014,6 +958,88 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
                   className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/10 active:scale-[0.98] transition disabled:opacity-50 cursor-pointer"
                 >
                   {renaming ? "Enregistrement..." : "Valider le nom"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE MODIFICATION DU PRIX */}
+      {isPriceModalOpen && priceOffer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-emerald-950/40 backdrop-blur-sm"
+            onClick={fermerEditionPrix}
+          ></div>
+
+          <div className="relative bg-white w-full max-w-md rounded-2xl shadow-2xl border border-gray-100 p-6 z-10 animate-slide-in">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-4 mb-4">
+              <h3 className="font-bold text-gray-800 text-lg">Modifier le prix du médicament</h3>
+              <button
+                type="button"
+                onClick={fermerEditionPrix}
+                className="p-1.5 hover:bg-gray-100 rounded-lg transition text-gray-400 hover:text-gray-600 cursor-pointer"
+              >
+                <XMarkIcon className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handlePriceSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                  Médicament
+                </label>
+                <input
+                  type="text"
+                  value={priceOffer.nom}
+                  disabled
+                  className="w-full h-11 px-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-400 outline-none cursor-not-allowed"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                  Prix actuel
+                </label>
+                <input
+                  type="text"
+                  value={`${Number(priceOffer.prix ?? 0).toLocaleString("fr-FR")} FCFA`}
+                  disabled
+                  className="w-full h-11 px-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-400 outline-none cursor-not-allowed"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-1">
+                  Nouveau prix (FCFA) *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={nouveauPrix}
+                  onChange={(e) => setNouveauPrix(e.target.value)}
+                  required
+                  autoFocus
+                  placeholder="Ex: 1500"
+                  className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm text-gray-700 outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition"
+                />
+              </div>
+
+              <div className="border-t border-gray-100 pt-4 mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={fermerEditionPrix}
+                  className="px-5 py-2 border border-gray-200 rounded-xl text-xs font-semibold text-gray-500 hover:bg-gray-50 transition cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingPrice}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/10 active:scale-[0.98] transition disabled:opacity-50 cursor-pointer"
+                >
+                  {savingPrice ? "Enregistrement..." : "Valider le prix"}
                 </button>
               </div>
             </form>
