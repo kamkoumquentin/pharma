@@ -21,7 +21,8 @@ export function telechargerCsv(nomFichier, entetes, lignes) {
     .map((ligne) => (ligne || []).map(echapperCelluleCsv).join(";"))
     .join("\r\n");
 
-  const contenu = `\uFEFF${toutesLignes}`;
+  // BOM UTF-8 + directive Excel Windows pour séparer proprement les colonnes
+  const contenu = `\uFEFFsep=;\r\n${toutesLignes}`;
   const blob = new Blob([contenu], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
 

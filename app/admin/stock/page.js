@@ -63,6 +63,7 @@ function StockContent() {
     <Centrale
       key={offreAModifier ? `stock-${offreAModifier.id}` : "stock"}
       pharmacieId={pharmacie.id}
+      pharmacieNom={pharmacie.nom}
       token={token}
       offreAModifier={offreAModifier}
       onOffreAModifierConsommee={() => router.replace("/admin/stock")}

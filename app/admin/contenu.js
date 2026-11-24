@@ -9,11 +9,16 @@ import {
   PhotoIcon,
   ChevronDownIcon,
   ArrowPathIcon,
-  TagIcon,
-  ArrowDownTrayIcon
+  TagIcon
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
-import { telechargerCsv, formaterDateFichier } from "@/app/lib/exportCsv";
+import ExportMenu from "@/app/components/ExportMenu";
+import {
+  telechargerCsv,
+  telechargerExcel,
+  telechargerPdf,
+  formaterDateFichier,
+} from "@/app/lib/exports";
 import { useToast } from "@/app/components/Toast";
 import {
   DISPONIBILITE_EN_STOCK,
@@ -26,7 +31,7 @@ import {
 const DUREE_APPUI_LONG_MS = 450;
 const SEUIL_MOUVEMENT_PX = 10;
 
-export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAModifierConsommee }) {
+export default function Centrale({ pharmacieId, pharmacieNom = "", token, offreAModifier, onOffreAModifierConsommee }) {
   const [lignes, setLignes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState(offreAModifier?.nom || "");
@@ -537,16 +542,36 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
     basculerSelectionLigne(idOffre);
   };
 
+  const preparerDonneesStockExport = () => ({
+    entetes: ["Médicament", "Prix (FCFA)", "Disponibilité"],
+    lignes: produitsFiltres.map((p) => [
+      p.nom,
+      p.prix ?? "",
+      p.disponibilite === DISPONIBILITE_EN_STOCK ? "En stock" : "Rupture",
+    ]),
+  });
+
   const exporterStockCsv = () => {
-    telechargerCsv(
-      `stock-pharmacie-${formaterDateFichier()}.csv`,
-      ["Médicament", "Prix (FCFA)", "Disponibilité"],
-      produitsFiltres.map((p) => [
-        p.nom,
-        p.prix ?? "",
-        p.disponibilite === DISPONIBILITE_EN_STOCK ? "En stock" : "Rupture",
-      ])
-    );
+    const { entetes, lignes: lignesExport } = preparerDonneesStockExport();
+    telechargerCsv(`stock-pharmacie-${formaterDateFichier()}.csv`, entetes, lignesExport);
+  };
+
+  const exporterStockExcel = () => {
+    const { entetes, lignes: lignesExport } = preparerDonneesStockExport();
+    telechargerExcel(`stock-pharmacie-${formaterDateFichier()}.xlsx`, [
+      { nom: "Stock", entetes, lignes: lignesExport },
+    ]);
+  };
+
+  const exporterStockPdf = () => {
+    const { entetes, lignes: lignesExport } = preparerDonneesStockExport();
+    telechargerPdf({
+      nomFichier: `stock-pharmacie-${formaterDateFichier()}.pdf`,
+      pharmacieNom: pharmacieNom || "Ma pharmacie",
+      titre: "État du stock de la pharmacie",
+      sousTitre: `${produitsFiltres.length} référence${produitsFiltres.length > 1 ? "s" : ""} exportée${produitsFiltres.length > 1 ? "s" : ""}`,
+      sections: [{ titre: "Catalogue des médicaments", entetes, lignes: lignesExport }],
+    });
   };
 
   return (
@@ -588,16 +613,12 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
             <ArrowPathIcon className={`w-4.5 h-4.5 ${loading ? "animate-spin" : ""}`} />
           </button>
 
-          <button
-            type="button"
-            onClick={exporterStockCsv}
+          <ExportMenu
             disabled={loading || produitsFiltres.length === 0}
-            className="h-11 px-3.5 inline-flex items-center gap-1.5 border border-gray-200 bg-white hover:bg-gray-50 rounded-xl transition cursor-pointer text-xs font-semibold text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Exporter le stock au format CSV (Excel)"
-          >
-            <ArrowDownTrayIcon className="w-4 h-4 text-emerald-600" />
-            <span className="hidden sm:inline">Exporter CSV</span>
-          </button>
+            onExportExcel={exporterStockExcel}
+            onExportPdf={exporterStockPdf}
+            onExportCsv={exporterStockCsv}
+          />
         </div>
       </div>
 

@@ -10,7 +10,6 @@ import {
   PlusCircleIcon,
   Squares2X2Icon,
   SparklesIcon,
-  ArrowDownTrayIcon,
 } from "@heroicons/react/24/outline";
 import {
   ResponsiveContainer,
@@ -28,7 +27,13 @@ import {
   formaterDureeMinutes,
   remettreOffreEnStock,
 } from "@/app/lib/statistiques";
-import { telechargerCsv, formaterDateFichier } from "@/app/lib/exportCsv";
+import ExportMenu from "@/app/components/ExportMenu";
+import {
+  telechargerCsv,
+  telechargerExcel,
+  telechargerPdf,
+  formaterDateFichier,
+} from "@/app/lib/exports";
 
 const PERIODES = [
   { valeur: 7, label: "7j" },
@@ -237,23 +242,20 @@ export default function Dashboard({ pharmacie, onNavigate }) {
       ? Math.round((kpis.totalVuesPharmacie / kpis.totalVuesVille) * 100)
       : null;
 
-  const exporterBilanCsv = () => {
-    const lignesExport = [
-      ["Indicateurs clés", "Vues de vos produits", kpis.totalVuesPharmacie, `Période ${nbJours}j`],
+  const preparerSectionsBilan = () => {
+    const indicateursLignes = [
+      ["Vues de vos produits", kpis.totalVuesPharmacie, `Période ${nbJours}j`],
       [
-        "Indicateurs clés",
         "Recherches en ville",
         kpis.totalVuesVille,
         partVuesVille !== null ? `${partVuesVille}% captées` : "",
       ],
       [
-        "Indicateurs clés",
         "Disponibilité du stock",
         `${kpis.tauxDisponibilite}%`,
         `${kpis.nbEnStock}/${kpis.totalOffres} en stock`,
       ],
       [
-        "Indicateurs clés",
         "Temps médian de réponse",
         formaterDureeMinutes(kpis.messagerie?.tempsMedianMinutes),
         kpis.messagerie?.tauxReponse !== null
@@ -261,47 +263,129 @@ export default function Dashboard({ pharmacie, onNavigate }) {
           : "Aucune demande reçue",
       ],
       [
-        "Indicateurs clés",
         "Produits en rupture",
         kpis.nbEnRupture,
         kpis.patientsEnAttente > 0 ? `${kpis.patientsEnAttente} patient(s) en attente` : "",
       ],
     ];
 
-    for (const p of topProduitsData) {
-      lignesExport.push([
-        "Top produits",
-        p.nom,
-        p.vues,
-        p.enStock ? "En stock" : "En rupture",
-      ]);
-    }
+    const topProduitsLignes = topProduitsData.map((p) => [
+      p.nom,
+      p.vues,
+      p.enStock ? "En stock" : "En rupture",
+    ]);
 
-    for (const item of opportunitesVille) {
-      lignesExport.push([
-        "Demande locale non couverte",
-        item.nom,
-        item.vuesVille,
-        item.statutChezVous === "en_rupture" ? "En rupture" : "Absent du catalogue",
-      ]);
-    }
+    const opportunitesLignes = opportunitesVille.map((item) => [
+      item.nom,
+      item.vuesVille,
+      item.statutChezVous === "en_rupture" ? "En rupture" : "Absent du catalogue",
+    ]);
 
-    for (const item of rupturesActuelles) {
-      lignesExport.push([
-        "Ruptures actives",
-        item.nom,
-        item.joursRupture !== null ? `${item.joursRupture} j` : "En rupture",
-        `${formaterPrixFcfa(item.prix)}${
-          item.nbPatientsEnAttente > 0 ? ` • ${item.nbPatientsEnAttente} patient(s) en attente` : ""
-        }`,
-      ]);
-    }
+    const rupturesLignes = rupturesActuelles.map((item) => [
+      item.nom,
+      formaterPrixFcfa(item.prix),
+      item.joursRupture !== null ? `${item.joursRupture} j` : "En rupture",
+      item.nbPatientsEnAttente > 0 ? `${item.nbPatientsEnAttente} patient(s)` : "0",
+    ]);
+
+    return {
+      indicateursLignes,
+      topProduitsLignes,
+      opportunitesLignes,
+      rupturesLignes,
+    };
+  };
+
+  const exporterBilanCsv = () => {
+    const {
+      indicateursLignes,
+      topProduitsLignes,
+      opportunitesLignes,
+      rupturesLignes,
+    } = preparerSectionsBilan();
+
+    const lignesExport = [
+      ...indicateursLignes.map((l) => ["Indicateurs clés", ...l]),
+      ...topProduitsLignes.map((l) => ["Top produits", ...l]),
+      ...opportunitesLignes.map((l) => ["Demande locale non couverte", ...l]),
+      ...rupturesLignes.map((l) => ["Ruptures actives", l[0], l[2], `${l[1]} • ${l[3]} en attente`]),
+    ];
 
     telechargerCsv(
       `bilan-pharmacie-${nbJours}j-${formaterDateFichier()}.csv`,
       ["Section", "Élément", "Valeur", "Détail"],
       lignesExport
     );
+  };
+
+  const exporterBilanExcel = () => {
+    const {
+      indicateursLignes,
+      topProduitsLignes,
+      opportunitesLignes,
+      rupturesLignes,
+    } = preparerSectionsBilan();
+
+    telechargerExcel(`bilan-pharmacie-${nbJours}j-${formaterDateFichier()}.xlsx`, [
+      {
+        nom: "Indicateurs clés",
+        entetes: ["Indicateur", "Valeur", "Détail"],
+        lignes: indicateursLignes,
+      },
+      {
+        nom: "Top produits",
+        entetes: ["Médicament", "Vues", "Statut"],
+        lignes: topProduitsLignes,
+      },
+      {
+        nom: "Opportunités locales",
+        entetes: ["Médicament", "Recherches ville", "Statut chez vous"],
+        lignes: opportunitesLignes,
+      },
+      {
+        nom: "Ruptures actives",
+        entetes: ["Médicament", "Prix", "Durée rupture", "Patients en attente"],
+        lignes: rupturesLignes,
+      },
+    ]);
+  };
+
+  const exporterBilanPdf = () => {
+    const {
+      indicateursLignes,
+      topProduitsLignes,
+      opportunitesLignes,
+      rupturesLignes,
+    } = preparerSectionsBilan();
+
+    telechargerPdf({
+      nomFichier: `bilan-pharmacie-${nbJours}j-${formaterDateFichier()}.pdf`,
+      pharmacieNom: pharmacie?.nom || "Ma pharmacie",
+      titre: "Bilan d'activité de la pharmacie",
+      sousTitre: `Période : ${nbJours} derniers jours${pharmacie?.ville ? ` (${pharmacie.ville})` : ""}`,
+      sections: [
+        {
+          titre: "Indicateurs clés",
+          entetes: ["Indicateur", "Valeur", "Détail"],
+          lignes: indicateursLignes,
+        },
+        {
+          titre: "Top produits les plus consultés",
+          entetes: ["Médicament", "Vues", "Statut"],
+          lignes: topProduitsLignes,
+        },
+        {
+          titre: "Demande locale non couverte",
+          entetes: ["Médicament", "Recherches ville", "Statut chez vous"],
+          lignes: opportunitesLignes,
+        },
+        {
+          titre: "Ruptures de stock à réactiver",
+          entetes: ["Médicament", "Prix", "Durée", "Patients en attente"],
+          lignes: rupturesLignes,
+        },
+      ],
+    });
   };
 
   return (
@@ -355,15 +439,11 @@ export default function Dashboard({ pharmacie, onNavigate }) {
             />
           </button>
 
-          <button
-            type="button"
-            onClick={exporterBilanCsv}
-            title="Exporter le bilan au format CSV (Excel)"
-            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 hover:text-emerald-700 hover:border-emerald-200 transition shadow-xs cursor-pointer"
-          >
-            <ArrowDownTrayIcon className="w-4 h-4 text-emerald-600" />
-            <span className="hidden sm:inline">Exporter CSV</span>
-          </button>
+          <ExportMenu
+            onExportExcel={exporterBilanExcel}
+            onExportPdf={exporterBilanPdf}
+            onExportCsv={exporterBilanCsv}
+          />
         </div>
       </div>
 
