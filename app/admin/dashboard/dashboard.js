@@ -10,6 +10,7 @@ import {
   PlusCircleIcon,
   Squares2X2Icon,
   SparklesIcon,
+  ArrowDownTrayIcon,
 } from "@heroicons/react/24/outline";
 import {
   ResponsiveContainer,
@@ -25,7 +26,9 @@ import {
 import {
   chargerStatistiquesPharmacie,
   formaterDureeMinutes,
+  remettreOffreEnStock,
 } from "@/app/lib/statistiques";
+import { telechargerCsv, formaterDateFichier } from "@/app/lib/exportCsv";
 
 const PERIODES = [
   { valeur: 7, label: "7j" },
@@ -94,6 +97,8 @@ export default function Dashboard({ pharmacie, onNavigate }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [actionError, setActionError] = useState(null);
+  const [restockingIds, setRestockingIds] = useState([]);
 
   const pharmacieId = pharmacie?.id;
 
@@ -123,6 +128,24 @@ export default function Dashboard({ pharmacie, onNavigate }) {
     },
     [pharmacieId, nbJours]
   );
+
+  const handleRemettreEnStock = async (offreId) => {
+    if (!offreId || restockingIds.includes(offreId)) return;
+    setActionError(null);
+    setRestockingIds((prev) => [...prev, offreId]);
+
+    try {
+      await remettreOffreEnStock(offreId);
+      await charger(true);
+    } catch (err) {
+      console.error("Erreur lors de la remise en stock :", err);
+      setActionError(
+        err?.message || "Impossible de remettre ce produit en stock."
+      );
+    } finally {
+      setRestockingIds((prev) => prev.filter((id) => id !== offreId));
+    }
+  };
 
   useEffect(() => {
     if (!pharmacieId) return undefined;
@@ -214,6 +237,73 @@ export default function Dashboard({ pharmacie, onNavigate }) {
       ? Math.round((kpis.totalVuesPharmacie / kpis.totalVuesVille) * 100)
       : null;
 
+  const exporterBilanCsv = () => {
+    const lignesExport = [
+      ["Indicateurs clés", "Vues de vos produits", kpis.totalVuesPharmacie, `Période ${nbJours}j`],
+      [
+        "Indicateurs clés",
+        "Recherches en ville",
+        kpis.totalVuesVille,
+        partVuesVille !== null ? `${partVuesVille}% captées` : "",
+      ],
+      [
+        "Indicateurs clés",
+        "Disponibilité du stock",
+        `${kpis.tauxDisponibilite}%`,
+        `${kpis.nbEnStock}/${kpis.totalOffres} en stock`,
+      ],
+      [
+        "Indicateurs clés",
+        "Temps médian de réponse",
+        formaterDureeMinutes(kpis.messagerie?.tempsMedianMinutes),
+        kpis.messagerie?.tauxReponse !== null
+          ? `Taux de réponse : ${kpis.messagerie.tauxReponse}%`
+          : "Aucune demande reçue",
+      ],
+      [
+        "Indicateurs clés",
+        "Produits en rupture",
+        kpis.nbEnRupture,
+        kpis.patientsEnAttente > 0 ? `${kpis.patientsEnAttente} patient(s) en attente` : "",
+      ],
+    ];
+
+    for (const p of topProduitsData) {
+      lignesExport.push([
+        "Top produits",
+        p.nom,
+        p.vues,
+        p.enStock ? "En stock" : "En rupture",
+      ]);
+    }
+
+    for (const item of opportunitesVille) {
+      lignesExport.push([
+        "Demande locale non couverte",
+        item.nom,
+        item.vuesVille,
+        item.statutChezVous === "en_rupture" ? "En rupture" : "Absent du catalogue",
+      ]);
+    }
+
+    for (const item of rupturesActuelles) {
+      lignesExport.push([
+        "Ruptures actives",
+        item.nom,
+        item.joursRupture !== null ? `${item.joursRupture} j` : "En rupture",
+        `${formaterPrixFcfa(item.prix)}${
+          item.nbPatientsEnAttente > 0 ? ` • ${item.nbPatientsEnAttente} patient(s) en attente` : ""
+        }`,
+      ]);
+    }
+
+    telechargerCsv(
+      `bilan-pharmacie-${nbJours}j-${formaterDateFichier()}.csv`,
+      ["Section", "Élément", "Valeur", "Détail"],
+      lignesExport
+    );
+  };
+
   return (
     <div className="space-y-6 pb-8">
       {/* Barre d'en-tête avec sélecteur de période */}
@@ -264,6 +354,16 @@ export default function Dashboard({ pharmacie, onNavigate }) {
               className={`w-4 h-4 ${refreshing ? "animate-spin text-emerald-600" : ""}`}
             />
           </button>
+
+          <button
+            type="button"
+            onClick={exporterBilanCsv}
+            title="Exporter le bilan au format CSV (Excel)"
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 hover:text-emerald-700 hover:border-emerald-200 transition shadow-xs cursor-pointer"
+          >
+            <ArrowDownTrayIcon className="w-4 h-4 text-emerald-600" />
+            <span className="hidden sm:inline">Exporter CSV</span>
+          </button>
         </div>
       </div>
 
@@ -276,6 +376,22 @@ export default function Dashboard({ pharmacie, onNavigate }) {
             className="font-semibold underline hover:text-amber-950 cursor-pointer"
           >
             Réessayer
+          </button>
+        </div>
+      )}
+
+      {actionError && (
+        <div
+          role="alert"
+          className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800 flex items-center justify-between gap-3"
+        >
+          <span>{actionError}</span>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="font-semibold underline hover:text-rose-950 cursor-pointer"
+          >
+            Fermer
           </button>
         </div>
       )}
@@ -527,26 +643,61 @@ export default function Dashboard({ pharmacie, onNavigate }) {
                 Aucune opportunité manquante détectée dans votre ville pour le moment.
               </div>
             ) : (
-              opportunitesVille.map((item) => (
-                <div
-                  key={item.idMedicament || item.nom}
-                  className="px-6 py-3.5 flex items-center justify-between gap-3 hover:bg-emerald-50/30 transition-colors"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate">
-                      {item.nom}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      {item.statutChezVous === "en_rupture"
-                        ? "Actuellement en rupture dans votre stock"
-                        : "Absent de votre catalogue"}
-                    </p>
+              opportunitesVille.map((item) => {
+                const enCours = item.offreId && restockingIds.includes(item.offreId);
+                return (
+                  <div
+                    key={item.idMedicament || item.nom}
+                    className="px-6 py-3.5 flex items-center justify-between gap-3 hover:bg-emerald-50/30 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 truncate">
+                        {item.nom}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                        <span className="text-xs text-gray-500">
+                          {item.statutChezVous === "en_rupture"
+                            ? "Actuellement en rupture dans votre stock"
+                            : "Absent de votre catalogue"}
+                        </span>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100/80 text-emerald-800">
+                          {item.vuesVille} recherche{item.vuesVille > 1 ? "s" : ""}
+                        </span>
+                      </div>
+                    </div>
+
+                    {item.statutChezVous === "en_rupture" ? (
+                      <button
+                        type="button"
+                        disabled={Boolean(enCours)}
+                        onClick={() => {
+                          if (item.offreId) {
+                            handleRemettreEnStock(item.offreId);
+                          } else {
+                            onNavigate?.("/admin/stock");
+                          }
+                        }}
+                        className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-semibold transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <ArrowPathIcon className={`w-3.5 h-3.5 ${enCours ? "animate-spin" : ""}`} />
+                        {enCours ? "En cours..." : "Réactiver"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onNavigate?.(
+                            `/admin/ajouter?medicamentId=${encodeURIComponent(item.idMedicament || "")}&nom=${encodeURIComponent(item.nom || "")}`
+                          )
+                        }
+                        className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/70 text-xs font-semibold transition cursor-pointer"
+                      >
+                        + Ajouter
+                      </button>
+                    )}
                   </div>
-                  <span className="shrink-0 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100/80 text-emerald-800">
-                    {item.vuesVille} recherche{item.vuesVille > 1 ? "s" : ""}
-                  </span>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -583,36 +734,49 @@ export default function Dashboard({ pharmacie, onNavigate }) {
                 Aucun produit en rupture de stock actuellement.
               </div>
             ) : (
-              rupturesActuelles.map((item) => (
-                <div
-                  key={item.id}
-                  className="px-6 py-3.5 flex items-center justify-between gap-3 hover:bg-amber-50/30 transition-colors"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate">
-                      {item.nom}
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2 mt-0.5">
-                      <span className="text-xs text-gray-500">
-                        {formaterPrixFcfa(item.prix)}
-                      </span>
-                      {item.nbPatientsEnAttente > 0 && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-800">
-                          {item.nbPatientsEnAttente} patient
-                          {item.nbPatientsEnAttente > 1 ? "s" : ""} en attente
+              rupturesActuelles.map((item) => {
+                const enCours = restockingIds.includes(item.id);
+                return (
+                  <div
+                    key={item.id}
+                    className="px-6 py-3.5 flex items-center justify-between gap-3 hover:bg-amber-50/30 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 truncate">
+                        {item.nom}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                        <span className="text-xs text-gray-500">
+                          {formaterPrixFcfa(item.prix)}
                         </span>
-                      )}
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800">
+                          {item.joursRupture !== null
+                            ? item.joursRupture === 0
+                              ? "Aujourd'hui"
+                              : `${item.joursRupture} j`
+                            : "En rupture"}
+                        </span>
+                        {item.nbPatientsEnAttente > 0 && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-800">
+                            {item.nbPatientsEnAttente} patient
+                            {item.nbPatientsEnAttente > 1 ? "s" : ""} en attente
+                          </span>
+                        )}
+                      </div>
                     </div>
+
+                    <button
+                      type="button"
+                      disabled={enCours}
+                      onClick={() => handleRemettreEnStock(item.id)}
+                      className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <ArrowPathIcon className={`w-3.5 h-3.5 ${enCours ? "animate-spin" : ""}`} />
+                      {enCours ? "En cours..." : "Remettre en stock"}
+                    </button>
                   </div>
-                  <span className="shrink-0 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800">
-                    {item.joursRupture !== null
-                      ? item.joursRupture === 0
-                        ? "Aujourd'hui"
-                        : `${item.joursRupture} j`
-                      : "En rupture"}
-                  </span>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

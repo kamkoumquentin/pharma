@@ -17,13 +17,23 @@ import {
   ChatBubbleLeftEllipsisIcon,
   ChatBubbleLeftRightIcon,
   ChartBarSquareIcon,
+  BellIcon,
+  BellAlertIcon,
+  SpeakerWaveIcon,
+  SpeakerXMarkIcon,
 } from "@heroicons/react/24/outline";
 import { supabase } from "@/app/lib/supabaseClient";
 import { useMessagerie } from "@/app/lib/messagerie";
 import { useDemandes } from "@/app/lib/demandes";
+import {
+  jouerSonAlerte,
+  demanderPermissionNotifications,
+  envoyerNotificationBureau,
+} from "@/app/lib/alertesDemandes";
 import { formaterNomPharmacie } from "@/app/lib/formatNomPharmacie.mjs";
 import { useToast } from "@/app/components/Toast";
 import { AdminProvider } from "@/app/admin/AdminContext";
+import StatutVisibiliteBadge from "@/app/admin/StatutVisibiliteBadge";
 
 const ROUTES_AUTH = [
   "/admin/connexion",
@@ -82,14 +92,26 @@ export default function AdminLayout({ children }) {
     emplacement: "",
     photo: "",
     visible: true,
+    abonnement_expire_le: null,
   });
   const [token, setToken] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(!estRouteAuth);
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
   const [discussionOuverteId, setDiscussionOuverteId] = useState(null);
   const [modificationsNonEnregistrees, setModificationsNonEnregistrees] = useState(false);
+  const [sonActif, setSonActif] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return localStorage.getItem("pharma_alertes_son") !== "off";
+  });
+  const [permissionNotif, setPermissionNotif] = useState(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) return "unsupported";
+    return Notification.permission;
+  });
   const annulerModificationsRef = useRef(null);
   const canalStatutRef = useRef(null);
+  const titreInitialRef = useRef(null);
+  const aChargeDemandesRef = useRef(false);
+  const precedentNonLusRef = useRef(0);
 
   const pharmacieActiveId = estRouteAuth ? "" : info.id;
   const messagerie = useMessagerie(pharmacieActiveId, !estRouteAuth && pathname?.startsWith("/admin/messages"));
@@ -103,6 +125,73 @@ export default function AdminLayout({ children }) {
     preparerOuvertureDiscussion(discussionId);
     setDiscussionOuverteId(discussionId);
   }, [preparerOuvertureDiscussion]);
+
+  const basculerSon = () => {
+    setSonActif((precedent) => {
+      const suivant = !precedent;
+      if (typeof window !== "undefined") {
+        localStorage.setItem("pharma_alertes_son", suivant ? "on" : "off");
+      }
+      return suivant;
+    });
+  };
+
+  const activerNotifications = async () => {
+    const resultat = await demanderPermissionNotifications();
+    setPermissionNotif(resultat);
+    if (resultat === "granted") {
+      showToast("Notifications bureau activées !", "success");
+    } else if (resultat === "denied") {
+      showToast("Notifications bloquées par le navigateur.", "info");
+    }
+  };
+
+  useEffect(() => {
+    if (estRouteAuth || typeof document === "undefined") return undefined;
+
+    if (titreInitialRef.current === null) {
+      titreInitialRef.current = document.title.replace(/^\(\d+\)\s*/, "");
+    }
+    const titreBase = titreInitialRef.current || "Medipharmac | Administration pharmacie";
+    document.title =
+      demandes.nonLus > 0
+        ? `(${demandes.nonLus}) Nouvelle demande — Pharma`
+        : titreBase;
+
+    return () => {
+      if (titreInitialRef.current !== null) {
+        document.title = titreInitialRef.current;
+      }
+    };
+  }, [demandes.nonLus, estRouteAuth]);
+
+  useEffect(() => {
+    if (estRouteAuth || demandes.chargement) return;
+
+    if (!aChargeDemandesRef.current) {
+      aChargeDemandesRef.current = true;
+      precedentNonLusRef.current = demandes.nonLus;
+      return;
+    }
+
+    if (demandes.nonLus > precedentNonLusRef.current) {
+      if (sonActif) {
+        jouerSonAlerte();
+      }
+      if (
+        typeof document !== "undefined" &&
+        (document.hidden || !pathname?.startsWith("/admin/demandes"))
+      ) {
+        envoyerNotificationBureau({
+          titre: "Nouvelle demande client",
+          corps: `Vous avez ${demandes.nonLus} message${demandes.nonLus > 1 ? "s" : ""} non lu${demandes.nonLus > 1 ? "s" : ""}.`,
+          onClick: () => nav.push("/admin/demandes"),
+        });
+      }
+    }
+
+    precedentNonLusRef.current = demandes.nonLus;
+  }, [demandes.chargement, demandes.nonLus, estRouteAuth, nav, pathname, sonActif]);
 
   useEffect(() => {
     if (!isLogoutConfirmOpen) return;
@@ -124,7 +213,7 @@ export default function AdminLayout({ children }) {
 
       const { data: profile, error } = await supabase
         .from("pharmacies")
-        .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude, statut, visible")
+        .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude, statut, visible, abonnement_expire_le")
         .eq("owner_id", user.id)
         .maybeSingle();
 
@@ -163,7 +252,7 @@ export default function AdminLayout({ children }) {
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           const res = await supabase
             .from("pharmacies")
-            .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude, statut, visible")
+            .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude, statut, visible, abonnement_expire_le")
             .eq("owner_id", user.id)
             .maybeSingle();
 
@@ -201,7 +290,7 @@ export default function AdminLayout({ children }) {
             const { data: createdProfile, error: createError } = await supabase
               .from("pharmacies")
               .insert(pharmacieData)
-              .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude, statut, visible")
+              .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude, statut, visible, abonnement_expire_le")
               .single();
 
             if (!createError && createdProfile) {
@@ -210,7 +299,7 @@ export default function AdminLayout({ children }) {
             } else if (createError && createError.code === "23505") {
               const { data: existingProfile } = await supabase
                 .from("pharmacies")
-                .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude, statut, visible")
+                .select("id, nom, ville, emplacement, photo, telephone, latitude, longitude, statut, visible, abonnement_expire_le")
                 .eq("owner_id", user.id)
                 .maybeSingle();
               if (existingProfile) profile = existingProfile;
@@ -282,6 +371,9 @@ export default function AdminLayout({ children }) {
           if (Object.prototype.hasOwnProperty.call(pharmacie, "visible")) {
             miseAJour.visible = pharmacie.visible;
           }
+          if (Object.prototype.hasOwnProperty.call(pharmacie, "abonnement_expire_le")) {
+            miseAJour.abonnement_expire_le = pharmacie.abonnement_expire_le;
+          }
           if (Object.keys(miseAJour).length === 0) return;
 
           setinfo((precedent) => (
@@ -315,7 +407,7 @@ export default function AdminLayout({ children }) {
 
   const confirmerNavigation = useCallback(() => {
     if (!modificationsNonEnregistrees) return true;
-    if (!window.confirm("Des modifications ne sont pas enregistrées. Les abandonner ?")) {
+    if (!window.confirm("Vous avez des modifications non enregistrées. Voulez-vous vraiment quitter cette page ?")) {
       return false;
     }
     annulerModificationsRef.current?.();
@@ -323,6 +415,25 @@ export default function AdminLayout({ children }) {
     setModificationsNonEnregistrees(false);
     return true;
   }, [modificationsNonEnregistrees]);
+
+  const handleNavigationClick = useCallback((event, href) => {
+    if (pathname === href) return;
+    if (!confirmerNavigation()) {
+      event.preventDefault();
+    }
+  }, [confirmerNavigation, pathname]);
+
+  useEffect(() => {
+    let actif = true;
+    Promise.resolve().then(() => {
+      if (!actif) return;
+      annulerModificationsRef.current = null;
+      setModificationsNonEnregistrees(false);
+    });
+    return () => {
+      actif = false;
+    };
+  }, [pathname]);
 
   useEffect(() => {
     if (!modificationsNonEnregistrees) return;
@@ -458,11 +569,7 @@ export default function AdminLayout({ children }) {
                   key={item.href}
                   href={item.href}
                   title={item.label}
-                  onClick={(e) => {
-                    if (!confirmerNavigation()) {
-                      e.preventDefault();
-                    }
-                  }}
+                  onClick={(e) => handleNavigationClick(e, item.href)}
                   className={`relative w-full flex items-center justify-center md:justify-start px-2 md:px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-200 cursor-pointer group ${
                     isActive
                       ? "bg-emerald-800 text-white shadow-md shadow-emerald-950/40"
@@ -511,14 +618,65 @@ export default function AdminLayout({ children }) {
 
         {/* Zone de contenu central */}
         <main className="flex-1 h-full overflow-hidden bg-gray-50 flex flex-col">
-          <header className="h-16 border-b border-gray-200/60 bg-white flex items-center justify-between px-8 shrink-0 shadow-sm shadow-gray-100/20">
-            {!estPagePharmacie && (
-              <h1 className="font-bold text-gray-800 text-lg">
+          <header className="h-16 border-b border-gray-200/60 bg-white flex items-center justify-between gap-4 px-8 shrink-0 shadow-sm shadow-gray-100/20">
+            {!estPagePharmacie ? (
+              <h1 className="font-bold text-gray-800 text-lg truncate">
                 {titreEntete(pathname)}
               </h1>
+            ) : (
+              <div />
             )}
-            <div className="text-xs text-gray-400 font-medium">
-              Session active en tant que Pharmacie
+            <div className="flex items-center gap-3 shrink-0">
+              <StatutVisibiliteBadge pharmacie={info} variant="compact" />
+              <div className="flex items-center gap-1.5 border-l border-gray-200 pl-3">
+                {permissionNotif !== "unsupported" && (
+                  <button
+                    type="button"
+                    onClick={activerNotifications}
+                    title={
+                      permissionNotif === "granted"
+                        ? "Notifications bureau activées"
+                        : permissionNotif === "denied"
+                          ? "Notifications bureau bloquées dans le navigateur"
+                          : "Activer les notifications bureau"
+                    }
+                    aria-label="Notifications bureau"
+                    className={`rounded-lg p-1.5 transition cursor-pointer ${
+                      permissionNotif === "granted"
+                        ? "bg-emerald-50 text-emerald-600"
+                        : permissionNotif === "denied"
+                          ? "text-gray-300 cursor-not-allowed"
+                          : "text-gray-500 hover:bg-gray-100 hover:text-emerald-600"
+                    }`}
+                  >
+                    {permissionNotif === "granted" ? (
+                      <BellAlertIcon className="h-4 w-4" />
+                    ) : (
+                      <BellIcon className="h-4 w-4" />
+                    )}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={basculerSon}
+                  title={sonActif ? "Couper le son des alertes" : "Activer le son des alertes"}
+                  aria-label={sonActif ? "Couper le son des alertes" : "Activer le son des alertes"}
+                  className={`rounded-lg p-1.5 transition cursor-pointer ${
+                    sonActif
+                      ? "bg-emerald-50 text-emerald-600 hover:bg-emerald-100"
+                      : "text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                  }`}
+                >
+                  {sonActif ? (
+                    <SpeakerWaveIcon className="h-4 w-4" />
+                  ) : (
+                    <SpeakerXMarkIcon className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+              <span className="hidden xl:inline text-xs text-gray-400 font-medium">
+                Session active en tant que Pharmacie
+              </span>
             </div>
           </header>
 

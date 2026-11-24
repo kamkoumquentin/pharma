@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { 
   TrashIcon, 
   PencilIcon, 
@@ -9,9 +9,11 @@ import {
   PhotoIcon,
   ChevronDownIcon,
   ArrowPathIcon,
-  TagIcon
+  TagIcon,
+  ArrowDownTrayIcon
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
+import { telechargerCsv, formaterDateFichier } from "@/app/lib/exportCsv";
 import { useToast } from "@/app/components/Toast";
 import {
   DISPONIBILITE_EN_STOCK,
@@ -91,7 +93,7 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
     setImageToEnlarge({ src, alt });
   };
 
-  const chargerProduits = async () => {
+  const chargerProduits = useCallback(async () => {
     if (!pharmacieId) return;
     
     setLoading(true);
@@ -121,11 +123,17 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
     } finally {
       setLoading(false);
     }
-  };
+  }, [pharmacieId, showToast]);
 
   useEffect(() => {
-    chargerProduits();
-  }, [pharmacieId]);
+    let actif = true;
+    Promise.resolve().then(() => {
+      if (actif) chargerProduits();
+    });
+    return () => {
+      actif = false;
+    };
+  }, [chargerProduits]);
 
   const supprimerProduit = async (idOffre, nomMed) => {
     const confirmation = window.confirm(`Voulez-vous vraiment retirer ${nomMed} de votre stock ?`);
@@ -529,6 +537,18 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
     basculerSelectionLigne(idOffre);
   };
 
+  const exporterStockCsv = () => {
+    telechargerCsv(
+      `stock-pharmacie-${formaterDateFichier()}.csv`,
+      ["Médicament", "Prix (FCFA)", "Disponibilité"],
+      produitsFiltres.map((p) => [
+        p.nom,
+        p.prix ?? "",
+        p.disponibilite === DISPONIBILITE_EN_STOCK ? "En stock" : "Rupture",
+      ])
+    );
+  };
+
   return (
     <div className="flex flex-col h-full space-y-6">
       
@@ -566,6 +586,17 @@ export default function Centrale({ pharmacieId, token, offreAModifier, onOffreAM
             title="Rafraîchir"
           >
             <ArrowPathIcon className={`w-4.5 h-4.5 ${loading ? "animate-spin" : ""}`} />
+          </button>
+
+          <button
+            type="button"
+            onClick={exporterStockCsv}
+            disabled={loading || produitsFiltres.length === 0}
+            className="h-11 px-3.5 inline-flex items-center gap-1.5 border border-gray-200 bg-white hover:bg-gray-50 rounded-xl transition cursor-pointer text-xs font-semibold text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Exporter le stock au format CSV (Excel)"
+          >
+            <ArrowDownTrayIcon className="w-4 h-4 text-emerald-600" />
+            <span className="hidden sm:inline">Exporter CSV</span>
           </button>
         </div>
       </div>

@@ -15,7 +15,14 @@ import { construireNomFichierImage } from "@/app/lib/nomFichierImage.mjs";
 import { assurerMedicament } from "@/app/lib/medicaments";
 import { useToast } from "@/app/components/Toast";
 
-export default function Ajouter({ pharmacieId, token, onAddSuccess, onModifierOffre }) {
+export default function Ajouter({
+  pharmacieId,
+  token,
+  onAddSuccess,
+  onModifierOffre,
+  initialMedicamentId = "",
+  initialNom = "",
+}) {
   const [medsList, setMedsList] = useState([]);
   const [loadingMeds, setLoadingMeds] = useState(false);
   
@@ -40,23 +47,51 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess, onModifierOf
   const showToast = useToast();
 
   // Charger la liste des médicaments ayant au moins une offre en pharmacie
-  const chargerMedicaments = async () => {
-    setLoadingMeds(true);
-    try {
-      const { data, error } = await supabase.rpc("lister_medicaments_avec_offres");
-      if (error) throw error;
-      setMedsList(data || []);
-    } catch (error) {
-      console.error("Erreur lors du chargement des médicaments :", error);
-      showToast("Impossible de charger le catalogue de médicaments.", "error");
-    } finally {
-      setLoadingMeds(false);
-    }
-  };
-
   useEffect(() => {
+    let actif = true;
+
+    const chargerMedicaments = async () => {
+      setLoadingMeds(true);
+      try {
+        const { data, error } = await supabase.rpc("lister_medicaments_avec_offres");
+        if (error) throw error;
+        if (!actif) return;
+
+        const liste = data || [];
+        setMedsList(liste);
+
+        if (initialMedicamentId || initialNom) {
+          const parId = initialMedicamentId
+            ? liste.find((m) => String(m.id) === String(initialMedicamentId))
+            : null;
+          const nomNettoye = initialNom.trim().toLowerCase();
+          const parNom = !parId && nomNettoye
+            ? liste.find((m) => String(m.nom || "").trim().toLowerCase() === nomNettoye)
+            : null;
+
+          const trouve = parId || parNom;
+          if (trouve) {
+            setSelectedMed(trouve.id);
+          } else if (initialNom.trim()) {
+            setSelectedMed("new");
+            setNouveauNomMed(initialNom.trim());
+          }
+        }
+      } catch (error) {
+        console.error("Erreur lors du chargement des médicaments :", error);
+        showToast("Impossible de charger le catalogue de médicaments.", "error");
+      } finally {
+        if (actif) {
+          setLoadingMeds(false);
+        }
+      }
+    };
+
     chargerMedicaments();
-  }, []);
+    return () => {
+      actif = false;
+    };
+  }, [initialMedicamentId, initialNom, showToast]);
 
   useEffect(() => {
     if (!imageToEnlarge) return;
@@ -73,17 +108,19 @@ export default function Ajouter({ pharmacieId, token, onAddSuccess, onModifierOf
 
   useEffect(() => {
     let isCurrentSelection = true;
-    setExistingImages([]);
-    setSelectedExistingImage("");
-
-    if (!selectedMed || selectedMed === "new") {
-      setLoadingExistingImages(false);
-      return () => {
-        isCurrentSelection = false;
-      };
-    }
 
     const chargerImagesExistantes = async () => {
+      await Promise.resolve();
+      if (!isCurrentSelection) return;
+
+      setExistingImages([]);
+      setSelectedExistingImage("");
+
+      if (!selectedMed || selectedMed === "new") {
+        setLoadingExistingImages(false);
+        return;
+      }
+
       setLoadingExistingImages(true);
       try {
         const { data, error } = await supabase

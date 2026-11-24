@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BuildingStorefrontIcon } from "@heroicons/react/24/solid";
 import Modification from "./modifier/modifier";
 import InformationsPharmacie from "./informations/informations";
+import StatutVisibiliteBadge from "./StatutVisibiliteBadge";
 import { useToast } from "@/app/components/Toast";
 
 const ONGLETS = [
@@ -199,6 +200,8 @@ export default function MaPharmacie({ info, onUpdate, onUnsavedState }) {
           {heureProchaine && <span className="text-sm text-gray-600">{heureProchaine}</span>}
         </div>
       </header>
+
+      <StatutVisibiliteBadge pharmacie={info} variant="detaille" />
 
       <div className="border-b border-gray-200">
         <nav aria-label="Sections de Ma pharmacie" className="flex min-w-0 gap-1 overflow-x-auto">

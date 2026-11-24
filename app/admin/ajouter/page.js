@@ -1,17 +1,25 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Ajouter from "@/app/admin/ajouter/ajouter";
 import { useAdmin } from "@/app/admin/AdminContext";
 
-export default function AjouterPage() {
+function AjouterContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { pharmacie, token } = useAdmin();
+
+  const medicamentId = searchParams.get("medicamentId") || "";
+  const nom = searchParams.get("nom") || "";
 
   return (
     <Ajouter
+      key={`${medicamentId}-${nom}`}
       pharmacieId={pharmacie.id}
       token={token}
+      initialMedicamentId={medicamentId}
+      initialNom={nom}
       onAddSuccess={() => router.push("/admin/stock")}
       onModifierOffre={(offre) => {
         if (offre?.id) {
@@ -21,5 +29,19 @@ export default function AjouterPage() {
         }
       }}
     />
+  );
+}
+
+export default function AjouterPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-64 items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-emerald-600 border-t-transparent" />
+        </div>
+      }
+    >
+      <AjouterContent />
+    </Suspense>
   );
 }

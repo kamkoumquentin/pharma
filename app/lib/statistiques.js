@@ -293,6 +293,7 @@ export async function chargerStatistiquesPharmacie(pharmacieId, nbJours = 30) {
       const infoOffre = offresParMedicament.get(item.id_medicament);
       return {
         idMedicament: item.id_medicament,
+        offreId: infoOffre?.id || null,
         nom: item.nom_medicament || "Médicament inconnu",
         vuesVille: Number(item.total_consultations) || 0,
         statutChezVous: infoOffre ? "en_rupture" : "absent",
@@ -371,4 +372,17 @@ export async function chargerStatistiquesPharmacie(pharmacieId, nbJours = 30) {
     opportunitesVille,
     rupturesActuelles,
   };
+}
+
+export async function remettreOffreEnStock(offreId) {
+  if (!offreId) {
+    throw new Error("Identifiant d'offre manquant.");
+  }
+
+  const { error } = await supabase
+    .from("offres")
+    .update({ disponibilite: DISPONIBILITE_EN_STOCK })
+    .eq("id", offreId);
+
+  if (error) throw error;
 }
