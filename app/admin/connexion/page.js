@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { EnvelopeIcon, LockClosedIcon, EyeIcon, EyeSlashIcon, KeyIcon, XMarkIcon, ArrowPathIcon } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
+import { logErreur } from "@/app/lib/logger";
 import { useToast } from "@/app/components/Toast";
 import OtpModal from "@/app/components/OtpModal";
 
@@ -48,7 +49,9 @@ export default function Connexion() {
         showToast(`Lien de réinitialisation envoyé à ${emailToUse} ! Vérifiez vos e-mails.`, "success");
       }
     } catch (err) {
-      console.error("Erreur reset password:", err);
+      logErreur("Connexion", "envoi du lien de réinitialisation", err, {
+        email: emailToUse,
+      });
       showToast("Une erreur est survenue lors de l'envoi de l'e-mail.", "error");
     } finally {
       setResetLoading(false);
@@ -118,7 +121,9 @@ export default function Connexion() {
           showToast("Connexion échouée.", "error");
         }
       } catch (error) {
-        console.error("Erreur de connexion", error);
+        logErreur("Connexion", "authentification pharmacie", error, {
+          email: emailClean,
+        });
         showToast("Une erreur est survenue lors de la connexion.", "error");
       } finally {
         setLoading(false);

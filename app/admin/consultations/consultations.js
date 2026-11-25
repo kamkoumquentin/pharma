@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { supabase } from "@/app/lib/supabaseClient";
+import { logErreur } from "@/app/lib/logger";
 import { ArrowPathIcon, ExclamationTriangleIcon, MapPinIcon } from "@heroicons/react/24/outline";
 
 export default function Consultations({ pharmacieId, token, ville }) {
@@ -24,7 +25,10 @@ export default function Consultations({ pharmacieId, token, ville }) {
       if (sbError) throw sbError;
       setStatistiques(data || []);
     } catch (err) {
-      console.error("Erreur lors de la récupération des statistiques par ville:", err);
+      logErreur("Consultations", "récupération des statistiques par ville", err, {
+        pharmacieId,
+        ville,
+      });
       setError(err.message || "Impossible de charger les statistiques de consultations.");
     } finally {
       setLoading(false);

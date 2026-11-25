@@ -12,6 +12,7 @@ import {
   TagIcon
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
+import { logErreur } from "@/app/lib/logger";
 import ExportMenu from "@/app/components/ExportMenu";
 import {
   telechargerCsv,
@@ -123,7 +124,9 @@ export default function Centrale({ pharmacieId, pharmacieNom = "", token, offreA
         setSelectedIds((prev) => prev.filter((id) => idsValides.has(id)));
       }
     } catch (error) {
-      console.error("Erreur lors du chargement des médicaments", error);
+      logErreur("Contenu", "chargement des médicaments en stock", error, {
+        pharmacieId,
+      });
       showToast("Impossible de charger le stock.", "error");
     } finally {
       setLoading(false);
@@ -150,7 +153,11 @@ export default function Centrale({ pharmacieId, pharmacieNom = "", token, offreA
       showToast(`${nomMed} a été retiré du stock !`, "success");
       chargerProduits();
     } catch (error) {
-      console.error("Erreur lors de la suppression", error);
+      logErreur("Contenu", "suppression d'une offre", error, {
+        pharmacieId,
+        offreId: idOffre,
+        nomMedicament: nomMed,
+      });
       showToast("Erreur lors du retrait du médicament.", "error");
     }
   };
@@ -211,7 +218,11 @@ export default function Centrale({ pharmacieId, pharmacieNom = "", token, offreA
       showToast("Prix du médicament mis à jour avec succès !", "success");
       fermerEditionPrix();
     } catch (error) {
-      console.error("Erreur mise à jour prix :", error);
+      logErreur("Contenu", "mise à jour du prix de l'offre", error, {
+        pharmacieId,
+        offreId: priceOffer.id,
+        nouveauPrix: prixValide,
+      });
       showToast(error?.message || "Erreur lors de la mise à jour du prix.", "error");
     } finally {
       setSavingPrice(false);
@@ -281,7 +292,10 @@ export default function Centrale({ pharmacieId, pharmacieNom = "", token, offreA
       );
       showToast("Image mise à jour avec succès !", "success");
     } catch (error) {
-      console.error("Erreur mise à jour image offre :", error);
+      logErreur("Contenu", "mise à jour de l'image de l'offre", error, {
+        pharmacieId,
+        offreId: produit.id,
+      });
       setLignes((prev) =>
         prev.map((ligne) =>
           ligne.id === produit.id ? { ...ligne, image: ancienneImage } : ligne
@@ -306,7 +320,9 @@ export default function Centrale({ pharmacieId, pharmacieNom = "", token, offreA
       if (error) throw error;
       setMedsList(data || []);
     } catch (error) {
-      console.error("Erreur lors du chargement des médicaments :", error);
+      logErreur("Contenu", "chargement du catalogue de médicaments", error, {
+        pharmacieId,
+      });
       showToast("Impossible de charger le catalogue de médicaments.", "error");
     } finally {
       setLoadingMeds(false);
@@ -357,7 +373,11 @@ export default function Centrale({ pharmacieId, pharmacieNom = "", token, offreA
       fermerEditionNom();
       await Promise.all([chargerProduits(), chargerMedicaments()]);
     } catch (error) {
-      console.error("Erreur lors du changement de médicament :", error);
+      logErreur("Contenu", "changement du médicament de l'offre", error, {
+        pharmacieId,
+        offreId: renameOffer?.id,
+        nouveauNom: nomNettoye,
+      });
       showToast(error.message || "Erreur lors du changement de nom du médicament.", "error");
     } finally {
       setRenaming(false);
@@ -427,7 +447,11 @@ export default function Centrale({ pharmacieId, pharmacieNom = "", token, offreA
         disponibilite: nouvelleDispo,
       });
     } catch (error) {
-      console.error("Erreur lors du changement de disponibilité :", error);
+      logErreur("Contenu", "changement de disponibilité d'une offre", error, {
+        pharmacieId,
+        offreId: produit.id,
+        nouvelleDisponibilite: nouvelleDispo,
+      });
       setLignes((prev) =>
         prev.map((ligne) =>
           ligne.id === produit.id ? { ...ligne, disponibilite: ancienneDispo } : ligne
@@ -489,7 +513,11 @@ export default function Centrale({ pharmacieId, pharmacieNom = "", token, offreA
       setSelectedIds([]);
       setIsBatchRestockConfirmOpen(false);
     } catch (error) {
-      console.error("Erreur lors de la mise à jour en lot :", error);
+      logErreur("Contenu", "mise à jour en lot de la disponibilité", error, {
+        pharmacieId,
+        nbOffres: idsCibles.length,
+        nouvelleDisponibilite: nouvelleDispo,
+      });
       setLignes((prev) =>
         prev.map((ligne) =>
           ciblesSet.has(ligne.id)

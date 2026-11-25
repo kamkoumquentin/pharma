@@ -13,6 +13,7 @@ import {
   ArrowPathIcon,
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
+import { logErreur } from "@/app/lib/logger";
 import { useToast } from "@/app/components/Toast";
 
 export default function Reinitialiser() {
@@ -180,7 +181,7 @@ export default function Reinitialiser() {
       localStorage.removeItem("role_pharmacie");
       navigate.push("/admin/connexion");
     } catch (err) {
-      console.error("Erreur mise à jour mot de passe:", err);
+      logErreur("ReinitialisationMotDePasse", "mise à jour du mot de passe", err);
       showToast("Une erreur est survenue lors de la réinitialisation.", "error");
     } finally {
       setSubmitting(false);

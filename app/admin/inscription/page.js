@@ -13,6 +13,7 @@ import {
   EyeSlashIcon
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
+import { logErreur } from "@/app/lib/logger";
 import {
   ERREUR_TELEPHONE_PHARMACIE,
   normaliserEtValiderTelephonePharmacie,
@@ -92,7 +93,9 @@ export default function Inscription() {
             .insert(pharmacieData);
 
           if (insertError && insertError.code !== "23505") {
-            console.error("Erreur création pharmacie après confirmation :", insertError);
+            logErreur("Inscription", "création pharmacie après confirmation OTP", insertError, {
+              ownerId: currentUser.id,
+            });
             showToast("Votre compte est activé, mais le profil n'a pas pu être créé automatiquement.", "error");
             nav.push("/admin");
             return;
@@ -100,7 +103,7 @@ export default function Inscription() {
         }
       }
     } catch (err) {
-      console.error("Erreur initialisation pharmacie post-OTP :", err);
+      logErreur("Inscription", "initialisation pharmacie post-OTP", err);
     }
 
     showToast("Pharmacie activée et connectée avec succès !", "success");

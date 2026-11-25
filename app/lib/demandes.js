@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/app/lib/supabaseClient";
+import { logErreur } from "@/app/lib/logger";
 import { useToast } from "@/app/components/Toast";
 
 const trierDiscussions = (discussions) => [...discussions].sort((a, b) => {
@@ -117,7 +118,9 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
     try {
       await requete;
     } catch (error) {
-      console.error("Erreur lors du chargement des demandes clients :", error);
+      logErreur("Demandes", "chargement des demandes clients", error, {
+        pharmacieId,
+      });
       setErreur(true);
     } finally {
       if (chargerDiscussionsRef.current === requete) chargerDiscussionsRef.current = null;
@@ -155,7 +158,9 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
           if (tentative === 1) {
             console.warn("Échec du premier marquage de la discussion comme lue, nouvelle tentative :", error);
           } else {
-            console.error("Erreur lors du marquage des demandes comme lues après une nouvelle tentative :", error);
+            logErreur("Demandes", "marquage des demandes comme lues après nouvelle tentative", error, {
+              discussionId,
+            });
           }
         }
       }
@@ -288,14 +293,17 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
       await chargerNomsMedicaments(messagesCharges);
     } catch (error) {
       if (generation !== generationCacheRef.current) return;
-      console.error("Erreur lors du chargement des messages de la demande :", error);
+      logErreur("Demandes", "chargement des messages de la demande", error, {
+        pharmacieId,
+        discussionId,
+      });
       setErreurMessages(true);
     } finally {
       if (generation === generationCacheRef.current && discussionOuverteRef.current === discussionId) {
         setChargementMessages(false);
       }
     }
-  }, [chargerNomsMedicaments, fusionnerDansCache]);
+  }, [chargerNomsMedicaments, fusionnerDansCache, pharmacieId]);
 
   const chargerMessagesPrecedents = useCallback(async () => {
     if (!discussionOuverteId || !messages.length || chargementPrecedents) return;
@@ -327,7 +335,11 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
       await chargerNomsMedicaments(messagesCharges);
     } catch (error) {
       if (generation !== generationCacheRef.current) return;
-      console.error("Erreur lors du chargement des messages précédents :", error);
+      logErreur("Demandes", "chargement des messages précédents", error, {
+        pharmacieId,
+        discussionId,
+        curseur,
+      });
       setErreurMessages(true);
     } finally {
       if (generation === generationCacheRef.current) setChargementPrecedents(false);
@@ -338,6 +350,7 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
     chargementPrecedents,
     chargerNomsMedicaments,
     fusionnerDansCache,
+    pharmacieId,
   ]);
 
   const ajouterMessageCache = useCallback((discussionId, message) => {
@@ -584,7 +597,11 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
           ) {
             ajouterMessageCache(message.discussion_id, message);
             Promise.resolve().then(() => chargerNomsMedicaments([message])).catch((error) => {
-              console.error("Erreur lors du chargement des noms de médicaments :", error);
+              logErreur("Demandes", "chargement des noms de médicaments", error, {
+                pharmacieId,
+                discussionId: message.discussion_id,
+                messageId: message.id,
+              });
             });
           }
 
@@ -609,7 +626,10 @@ export function useDemandes(pharmacieId, sectionOuverte, discussionOuverteId) {
           if (dejaConnecte) Promise.resolve().then(chargerDiscussions);
           dejaConnecte = true;
         } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-          console.error("Erreur du canal Realtime des demandes clients :", error || status);
+          logErreur("Demandes", "canal Realtime des demandes clients", error || status, {
+            pharmacieId,
+            canalStatus: status,
+          });
           setErreurCanal(true);
         }
       });

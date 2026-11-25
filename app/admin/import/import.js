@@ -15,6 +15,7 @@ import {
   InformationCircleIcon
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
+import { logErreur } from "@/app/lib/logger";
 import {
   assurerMedicament,
   chargerMedicamentsParNoms,
@@ -208,7 +209,10 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
         setFile(null);
       }
     } catch (error) {
-      console.error(error);
+      logErreur("ImportStock", "analyse du document par l'IA", error, {
+        pharmacieId,
+        nomFichier: file?.name,
+      });
       showToast("Erreur lors de l'analyse du document.", "error");
       setFile(null);
     } finally {
@@ -401,7 +405,11 @@ export default function ImportationStock({ pharmacieId, onImportSuccess }) {
             await supprimerImageImportee(imageImportee);
           }
         }
-        console.error(`Échec importation de ${item.nom} :`, error);
+        logErreur("ImportStock", "importation d'une ligne de stock", error, {
+          pharmacieId,
+          nomProduit: item.nom,
+          medicamentId: item.idMedicament,
+        });
         nomsEnErreur.push(item.nom);
       }
 

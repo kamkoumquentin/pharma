@@ -11,6 +11,7 @@ import {
   XMarkIcon
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
+import { logErreur } from "@/app/lib/logger";
 import { construireNomFichierImage } from "@/app/lib/nomFichierImage.mjs";
 import { assurerMedicament } from "@/app/lib/medicaments";
 import { useToast } from "@/app/components/Toast";
@@ -78,7 +79,9 @@ export default function Ajouter({
           }
         }
       } catch (error) {
-        console.error("Erreur lors du chargement des médicaments :", error);
+        logErreur("AjouterOffre", "chargement du catalogue de médicaments", error, {
+          pharmacieId,
+        });
         showToast("Impossible de charger le catalogue de médicaments.", "error");
       } finally {
         if (actif) {
@@ -91,7 +94,7 @@ export default function Ajouter({
     return () => {
       actif = false;
     };
-  }, [initialMedicamentId, initialNom, showToast]);
+  }, [initialMedicamentId, initialNom, pharmacieId, showToast]);
 
   useEffect(() => {
     if (!imageToEnlarge) return;
@@ -140,7 +143,10 @@ export default function Ajouter({
           setExistingImages(urls);
         }
       } catch (error) {
-        console.error("Erreur lors du chargement des images existantes :", error);
+        logErreur("AjouterOffre", "chargement des images existantes", error, {
+          pharmacieId,
+          medicamentId: selectedMed,
+        });
         if (isCurrentSelection) {
           setExistingImages([]);
           showToast("Impossible de charger les images existantes. Vous pouvez téléverser une nouvelle image.", "error");
@@ -157,7 +163,7 @@ export default function Ajouter({
     return () => {
       isCurrentSelection = false;
     };
-  }, [selectedMed, showToast]);
+  }, [pharmacieId, selectedMed, showToast]);
 
   const handleMedChange = (e) => {
     setSelectedMed(e.target.value);
@@ -290,7 +296,11 @@ export default function Ajouter({
             uploadErr.status === 400 &&
             /the resource already exists/i.test(uploadErr.message || "");
           if (!imageDejaPresente) {
-            console.error("Erreur lors du téléversement de l'image :", uploadErr);
+            logErreur("AjouterOffre", "téléversement de l'image de l'offre", uploadErr, {
+              pharmacieId,
+              medicamentId: idMedicament,
+              cheminImage,
+            });
             showToast("Impossible de téléverser l’image. L’offre n’a pas été enregistrée.", "error");
             return;
           }
@@ -342,7 +352,10 @@ export default function Ajouter({
         onAddSuccess();
       }
     } catch (error) {
-      console.error("Erreur d'ajout de l'offre :", error);
+      logErreur("AjouterOffre", "ajout d'une offre au stock", error, {
+        pharmacieId,
+        medicamentSelectionne: selectedMed,
+      });
       showToast(error.message || "Erreur lors de l'ajout du médicament au stock.", "error");
     } finally {
       setLoading(false);

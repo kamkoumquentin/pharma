@@ -23,6 +23,7 @@ import {
   SpeakerXMarkIcon,
 } from "@heroicons/react/24/outline";
 import { supabase } from "@/app/lib/supabaseClient";
+import { logErreur } from "@/app/lib/logger";
 import { useMessagerie } from "@/app/lib/messagerie";
 import { useDemandes } from "@/app/lib/demandes";
 import {
@@ -223,7 +224,7 @@ export default function AdminLayout({ children }) {
       }
       return null;
     } catch (error) {
-      console.error("Erreur lors du rafraîchissement du profil :", error);
+      logErreur("AdminLayout", "rafraîchissement du profil pharmacie", error);
       return null;
     }
   }, []);
@@ -304,7 +305,9 @@ export default function AdminLayout({ children }) {
                 .maybeSingle();
               if (existingProfile) profile = existingProfile;
             } else {
-              console.error("Échec de création automatique de la pharmacie :", createError);
+              logErreur("AdminLayout", "création automatique de la pharmacie", createError, {
+                ownerId: user.id,
+              });
             }
           } else {
             showToast("Votre compte est activé mais votre profil pharmacie est incomplet. Veuillez contacter le support ou compléter votre inscription.", "error");
@@ -333,7 +336,7 @@ export default function AdminLayout({ children }) {
         setToken("active");
         setLoadingProfile(false);
       } catch (error) {
-        console.error("Erreur de vérification de la session :", error);
+        logErreur("AdminLayout", "vérification de la session", error);
         viderCacheDemandes();
         viderCacheMessagerie();
         localStorage.removeItem("token_pharmacie");
@@ -386,7 +389,10 @@ export default function AdminLayout({ children }) {
       .subscribe((status, error) => {
         if (!actif) return;
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-          console.error("Erreur du canal Realtime du statut pharmacie :", error || status);
+          logErreur("AdminLayout", "canal Realtime du statut pharmacie", error || status, {
+            pharmacieId: info.id,
+            canalStatus: status,
+          });
         }
       });
     canalStatutRef.current = channel;
@@ -453,7 +459,7 @@ export default function AdminLayout({ children }) {
     try {
       await supabase.auth.signOut();
     } catch (error) {
-      console.error("Erreur déconnexion serveur :", error);
+      logErreur("AdminLayout", "déconnexion serveur", error, { pharmacieId: info.id });
     }
     localStorage.removeItem("token_pharmacie");
     localStorage.removeItem("role_pharmacie");

@@ -7,6 +7,7 @@ import {
   MapIcon 
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
+import { logErreur } from "@/app/lib/logger";
 import { useToast } from "@/app/components/Toast";
 
 const MedicalMapPinIcon = ({ className = "w-5 h-5" }) => (
@@ -111,7 +112,10 @@ export default function Modification({
             else erreurLogo = "URL publique du logo indisponible";
           }
         } catch (storageErr) {
-          console.error("Erreur upload photo pharmacie:", storageErr);
+          logErreur("ModifierProfil", "téléversement du logo de la pharmacie", storageErr, {
+            pharmacieId: info.id,
+            section,
+          });
           erreurLogo = storageErr?.message || "erreur inattendue pendant l’envoi";
         }
       }
@@ -124,7 +128,10 @@ export default function Modification({
         .single();
 
       if (updateErr) {
-        console.error("Échec de la mise à jour du profil pharmacie :", updateErr);
+        logErreur("ModifierProfil", "mise à jour du profil pharmacie", updateErr, {
+          pharmacieId: info.id,
+          section,
+        });
         return {
           success: false,
           error: erreurLogo
@@ -154,7 +161,10 @@ export default function Modification({
         warning: erreurLogo ? `Le logo n’a pas pu être envoyé (${erreurLogo}).` : "",
       };
     } catch (error) {
-      console.error("Erreur lors de la sauvegarde :", error);
+      logErreur("ModifierProfil", "sauvegarde du profil pharmacie", error, {
+        pharmacieId: info.id,
+        section,
+      });
       return { success: false, error: error?.message || "Erreur lors de la sauvegarde." };
     } finally {
       setLoading(false);

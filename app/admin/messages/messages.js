@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ArrowPathIcon, PaperAirplaneIcon } from "@heroicons/react/24/outline";
 import ChatMessageThread from "@/app/components/ChatMessageThread";
+import { logErreur } from "@/app/lib/logger";
 
 const formaterDate = (date) => new Intl.DateTimeFormat("fr-FR", {
   timeZone: "Africa/Douala",
@@ -37,7 +38,9 @@ export default function Messages({
       await envoyerMessage(texte, idOptimiste);
       if (!idOptimiste) setContenu("");
     } catch (error) {
-      console.error("Erreur lors de l'envoi du message :", error);
+      logErreur("MessagesAdmin", "envoi d'un message", error, {
+        conversationId,
+      });
       setErreurEnvoi(true);
     } finally {
       setEnvoi(false);

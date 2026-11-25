@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ShieldCheckIcon, KeyIcon, ArrowPathIcon, XMarkIcon } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
+import { logErreur } from "@/app/lib/logger";
 import { useToast } from "@/app/components/Toast";
 
 export default function OtpModal({ isOpen, email, onSuccess, onClose }) {
@@ -40,7 +41,9 @@ export default function OtpModal({ isOpen, email, onSuccess, onClose }) {
         onSuccess(data?.session, data?.user);
       }
     } catch (err) {
-      console.error("Erreur lors de la vérification du code OTP:", err);
+      logErreur("OtpModal", "vérification du code OTP", err, {
+        email: email?.trim().toLowerCase(),
+      });
       showToast("Une erreur est survenue lors de la validation du code.", "error");
     } finally {
       setLoading(false);
@@ -61,7 +64,9 @@ export default function OtpModal({ isOpen, email, onSuccess, onClose }) {
         showToast("Nouveau code envoyé par email !", "success");
       }
     } catch (err) {
-      console.error("Erreur renvoi OTP:", err);
+      logErreur("OtpModal", "renvoi du code OTP", err, {
+        email: email?.trim().toLowerCase(),
+      });
       showToast("Erreur lors du renvoi du code.", "error");
     } finally {
       setResending(false);

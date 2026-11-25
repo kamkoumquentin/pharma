@@ -7,6 +7,7 @@ import {
   TrashIcon,
 } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
+import { logErreur } from "@/app/lib/logger";
 import {
   ERREUR_TELEPHONE_PHARMACIE,
   normaliserEtValiderTelephonePharmacie,
@@ -239,7 +240,9 @@ export default function InformationsPharmacie({
     try {
       appliquerDonnees(await lireDonnees());
     } catch (error) {
-      console.error("Erreur de chargement des informations pharmacie :", error);
+      logErreur("InformationsPharmacie", "chargement des informations pharmacie", error, {
+        pharmacieId: info.id,
+      });
       const message = nomErreur(error);
       setErreursChargement({
         horaires: message,
@@ -249,7 +252,7 @@ export default function InformationsPharmacie({
       });
       setChargement(false);
     }
-  }, [appliquerDonnees, lireDonnees]);
+  }, [appliquerDonnees, info.id, lireDonnees]);
 
   useEffect(() => {
     let ignore = false;
@@ -259,7 +262,9 @@ export default function InformationsPharmacie({
         if (!ignore) appliquerDonnees(donnees);
       } catch (error) {
         if (!ignore) {
-          console.error("Erreur de chargement des informations pharmacie :", error);
+          logErreur("InformationsPharmacie", "chargement initial des informations pharmacie", error, {
+            pharmacieId: info.id,
+          });
           setErreursChargement({
             horaires: nomErreur(error),
             fermetures: nomErreur(error),
@@ -274,7 +279,7 @@ export default function InformationsPharmacie({
     return () => {
       ignore = true;
     };
-  }, [appliquerDonnees, lireDonnees]);
+  }, [appliquerDonnees, info.id, lireDonnees]);
 
   const sauvegarderTelephone = useCallback(async () => {
     const resultatTelephone = normaliserEtValiderTelephonePharmacie(telephone);
@@ -298,7 +303,9 @@ export default function InformationsPharmacie({
     setEnregistrementTelephone(false);
 
     if (error) {
-      console.error("Erreur d'enregistrement du téléphone :", error);
+      logErreur("InformationsPharmacie", "enregistrement du téléphone", error, {
+        pharmacieId: info.id,
+      });
       return { success: false, error: detailErreur(error) };
     }
     setTelephone(data.telephone || resultatTelephone.telephone);
@@ -377,7 +384,9 @@ export default function InformationsPharmacie({
       .select("id_pharmacie, jour_semaine, ouverture, fermeture")
       .eq("id_pharmacie", info.id);
     if (lectureErreur) {
-      console.error("Erreur de lecture des horaires actuels :", lectureErreur);
+      logErreur("InformationsPharmacie", "lecture des horaires actuels", lectureErreur, {
+        pharmacieId: info.id,
+      });
       setEnregistrementHoraires(false);
       return { success: false, error: `Impossible de lire les horaires actuels : ${detailErreur(lectureErreur)}` };
     }
@@ -387,7 +396,9 @@ export default function InformationsPharmacie({
       .delete()
       .eq("id_pharmacie", info.id);
     if (suppressionErreur) {
-      console.error("Erreur de suppression des anciens horaires :", suppressionErreur);
+      logErreur("InformationsPharmacie", "suppression des anciens horaires", suppressionErreur, {
+        pharmacieId: info.id,
+      });
       setEnregistrementHoraires(false);
       return { success: false, error: `Impossible de supprimer les anciens horaires : ${detailErreur(suppressionErreur)}` };
     }
@@ -405,12 +416,18 @@ export default function InformationsPharmacie({
       : { error: null };
 
     if (insertionErreur) {
-      console.error("Erreur d'insertion des nouveaux horaires :", insertionErreur);
+      logErreur("InformationsPharmacie", "insertion des nouveaux horaires", insertionErreur, {
+        pharmacieId: info.id,
+        nbPlages: plagesAInserer.length,
+      });
       const { error: restaurationErreur } = anciensHoraires.length
         ? await supabase.from("pharmacie_horaires").insert(anciensHoraires)
         : { error: null };
       if (restaurationErreur) {
-        console.error("Erreur de restauration des horaires précédents :", restaurationErreur);
+        logErreur("InformationsPharmacie", "restauration des horaires précédents", restaurationErreur, {
+          pharmacieId: info.id,
+          nbPlagesRestaurees: anciensHoraires.length,
+        });
         setEnregistrementHoraires(false);
         return {
           success: false,
@@ -481,7 +498,10 @@ export default function InformationsPharmacie({
     }
     const { error } = await supabase.from(table).insert(nouvelleLigne);
     if (error) {
-      console.error(`Erreur d'ajout dans ${table} :`, error);
+      logErreur("InformationsPharmacie", `ajout dans ${table}`, error, {
+        pharmacieId: info.id,
+        table,
+      });
       setActionEnCours("");
       return { success: false, error: `Impossible d'enregistrer cette période : ${detailErreur(error)}` };
     }
@@ -520,7 +540,11 @@ export default function InformationsPharmacie({
       .eq("id", ligne.id)
       .eq("id_pharmacie", info.id);
     if (error) {
-      console.error(`Erreur de suppression dans ${table} :`, error);
+      logErreur("InformationsPharmacie", `suppression dans ${table}`, error, {
+        pharmacieId: info.id,
+        table,
+        periodeId: ligne.id,
+      });
       showToast(
         `Impossible de supprimer cette période : ${detailErreur(error)}`,
         "error",

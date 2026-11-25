@@ -27,6 +27,7 @@ import {
   formaterDureeMinutes,
   remettreOffreEnStock,
 } from "@/app/lib/statistiques";
+import { logErreur } from "@/app/lib/logger";
 import ExportMenu from "@/app/components/ExportMenu";
 import {
   telechargerCsv,
@@ -122,7 +123,10 @@ export default function Dashboard({ pharmacie, onNavigate }) {
         const res = await chargerStatistiquesPharmacie(pharmacieId, nbJours);
         setDonnees(res);
       } catch (err) {
-        console.error("Erreur lors du chargement du tableau de bord :", err);
+        logErreur("Dashboard", "chargement du tableau de bord", err, {
+          pharmacieId,
+          nbJours,
+        });
         setError(
           err?.message || "Impossible de charger les statistiques du tableau de bord."
         );
@@ -143,7 +147,10 @@ export default function Dashboard({ pharmacie, onNavigate }) {
       await remettreOffreEnStock(offreId);
       await charger(true);
     } catch (err) {
-      console.error("Erreur lors de la remise en stock :", err);
+      logErreur("Dashboard", "remise en stock d'une offre", err, {
+        pharmacieId,
+        offreId,
+      });
       setActionError(
         err?.message || "Impossible de remettre ce produit en stock."
       );
@@ -164,7 +171,10 @@ export default function Dashboard({ pharmacie, onNavigate }) {
       })
       .catch((err) => {
         if (!actif) return;
-        console.error("Erreur lors du chargement du tableau de bord :", err);
+        logErreur("Dashboard", "chargement initial du tableau de bord", err, {
+          pharmacieId,
+          nbJours,
+        });
         setError(
           err?.message || "Impossible de charger les statistiques du tableau de bord."
         );

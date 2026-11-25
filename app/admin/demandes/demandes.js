@@ -11,6 +11,7 @@ import {
   XMarkIcon,
 } from "@heroicons/react/24/outline";
 import ChatMessageThread from "@/app/components/ChatMessageThread";
+import { logErreur } from "@/app/lib/logger";
 
 const reponsesRapides = [
   "Disponible, vous pouvez venir le retirer",
@@ -120,7 +121,9 @@ export default function Demandes({
       await envoyerMessageEnMemoire(discussionOuverteId, texte);
       setContenu("");
     } catch (error) {
-      console.error("Erreur lors de l'envoi d'une réponse client :", error);
+      logErreur("DemandesAdmin", "envoi d'une réponse client", error, {
+        discussionId: discussionOuverteId,
+      });
       setErreurEnvoi(
         error?.message?.toLowerCase().includes("limite")
           ? "Vous envoyez trop de messages, patientez un instant."
@@ -138,7 +141,10 @@ export default function Demandes({
     try {
       await envoyerMessageEnMemoire(discussionOuverteId, message.contenu, message.id);
     } catch (error) {
-      console.error("Erreur lors de la nouvelle tentative d'envoi :", error);
+      logErreur("DemandesAdmin", "nouvelle tentative d'envoi d'une réponse", error, {
+        discussionId: discussionOuverteId,
+        messageId: message.id,
+      });
       setErreurEnvoi("Impossible d'envoyer le message. Réessayez.");
     } finally {
       setEnvoi(false);
@@ -169,7 +175,10 @@ export default function Demandes({
       await modifierMessageEnMemoire(discussionOuverteId, message.id, texte);
       annulerModification();
     } catch (error) {
-      console.error("Erreur lors de la modification du message :", error);
+      logErreur("DemandesAdmin", "modification d'un message", error, {
+        discussionId: discussionOuverteId,
+        messageId: message.id,
+      });
       setErreurActionMessage("Impossible de modifier ce message. Réessayez.");
       setErreurActionMessageId(message.id);
     } finally {
@@ -189,7 +198,10 @@ export default function Demandes({
       await supprimerMessageEnMemoire(discussionOuverteId, message.id);
       if (messageEnEditionId === message.id) annulerModification();
     } catch (error) {
-      console.error("Erreur lors de la suppression du message :", error);
+      logErreur("DemandesAdmin", "suppression d'un message", error, {
+        discussionId: discussionOuverteId,
+        messageId: message.id,
+      });
       setErreurActionMessage("Impossible de supprimer ce message. Réessayez.");
       setErreurActionMessageId(message.id);
     } finally {

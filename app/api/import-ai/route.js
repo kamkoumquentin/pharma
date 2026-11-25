@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
+import { logErreur } from "@/app/lib/logger";
 
 export async function POST(req) {
   try {
@@ -80,7 +81,9 @@ export async function POST(req) {
     try {
       jsonResultat = JSON.parse(rawAnswer);
     } catch (parseError) {
-      console.error("Erreur de parsing JSON Gemini :", rawAnswer);
+      logErreur("API /api/import-ai", "parsing JSON de la réponse Gemini", parseError, {
+        longueurReponse: rawAnswer?.length ?? 0,
+      });
       return NextResponse.json(
         { error: "L'IA a retourné un format JSON invalide." },
         { status: 500 }
@@ -103,7 +106,7 @@ export async function POST(req) {
     });
 
   } catch (error) {
-    console.error("Erreur API Route /api/import-ai :", error);
+    logErreur("API /api/import-ai", "traitement de la requête POST", error);
     return NextResponse.json(
       { error: "Erreur interne du serveur lors de l'analyse du document." },
       { status: 500 }

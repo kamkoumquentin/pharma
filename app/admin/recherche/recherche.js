@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { MagnifyingGlassIcon, MapPinIcon } from "@heroicons/react/24/solid";
 import { supabase } from "@/app/lib/supabaseClient";
+import { logErreur } from "@/app/lib/logger";
 import { useToast } from "@/app/components/Toast";
 import dynamic from "next/dynamic";
 
@@ -59,7 +60,10 @@ export default function RechercheGlobale({ pharmacieId, token }) {
         showToast("Aucun médicament trouvé pour cette recherche.", "info");
       }
     } catch (error) {
-      console.error("Erreur de recherche:", error);
+      logErreur("RechercheGlobale", "recherche de médicaments", error, {
+        pharmacieId,
+        requete: query.trim(),
+      });
       showToast("Erreur lors de la recherche.", "error");
     } finally {
       setIsLoading(false);

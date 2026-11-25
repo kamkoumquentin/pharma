@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/app/lib/supabaseClient";
+import { logErreur } from "@/app/lib/logger";
 import { useToast } from "@/app/components/Toast";
 
 const trierMessages = (messages) => [...messages].sort(
@@ -67,7 +68,9 @@ export function useMessagerie(pharmacieId, sectionOuverte) {
     try {
       await requete;
     } catch (error) {
-      console.error("Erreur lors du chargement de la conversation :", error);
+      logErreur("Messagerie", "chargement de la conversation", error, {
+        pharmacieId,
+      });
       setErreur(true);
     } finally {
       if (chargementConversationRef.current === requete) chargementConversationRef.current = null;
@@ -107,7 +110,9 @@ export function useMessagerie(pharmacieId, sectionOuverte) {
           if (tentative === 1) {
             console.warn("Échec du premier marquage de la conversation comme lue, nouvelle tentative :", error);
           } else {
-            console.error("Erreur lors du marquage de la conversation comme lue après une nouvelle tentative :", error);
+            logErreur("Messagerie", "marquage de la conversation comme lue après nouvelle tentative", error, {
+              conversationId,
+            });
           }
         }
       }
@@ -191,14 +196,17 @@ export function useMessagerie(pharmacieId, sectionOuverte) {
       }
     } catch (error) {
       if (generation !== generationCacheRef.current) return;
-      console.error("Erreur lors du chargement des messages :", error);
+      logErreur("Messagerie", "chargement des messages", error, {
+        pharmacieId,
+        conversationId,
+      });
       setErreurMessages(true);
     } finally {
       if (generation === generationCacheRef.current && conversationRef.current?.id === conversationId) {
         setChargementMessages(false);
       }
     }
-  }, [fusionnerCache]);
+  }, [fusionnerCache, pharmacieId]);
 
   const chargerMessagesPrecedents = useCallback(async () => {
     const conversationId = conversationRef.current?.id;
@@ -230,12 +238,16 @@ export function useMessagerie(pharmacieId, sectionOuverte) {
       ].filter((message, index, liste) => liste.findIndex((item) => item.id === message.id) === index)));
     } catch (error) {
       if (generation !== generationCacheRef.current) return;
-      console.error("Erreur lors du chargement des messages précédents :", error);
+      logErreur("Messagerie", "chargement des messages précédents", error, {
+        pharmacieId,
+        conversationId,
+        curseur,
+      });
       setErreurMessages(true);
     } finally {
       if (generation === generationCacheRef.current) setChargementPrecedents(false);
     }
-  }, [messages, chargementPrecedents, fusionnerCache]);
+  }, [messages, chargementPrecedents, fusionnerCache, pharmacieId]);
 
   const envoyerMessage = useCallback(async (texte, idOptimiste = null) => {
     let conversationCourante = conversationRef.current;
@@ -414,7 +426,10 @@ export function useMessagerie(pharmacieId, sectionOuverte) {
           if (dejaConnecte) Promise.resolve().then(chargerConversation);
           dejaConnecte = true;
         } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-          console.error("Erreur du canal Realtime de messagerie :", error || status);
+          logErreur("Messagerie", "canal Realtime de messagerie", error || status, {
+            pharmacieId,
+            canalStatus: status,
+          });
         }
       });
 
