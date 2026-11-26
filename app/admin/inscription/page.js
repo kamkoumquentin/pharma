@@ -96,14 +96,21 @@ export default function Inscription() {
             logErreur("Inscription", "création pharmacie après confirmation OTP", insertError, {
               ownerId: currentUser.id,
             });
-            showToast("Votre compte est activé, mais le profil n'a pas pu être créé automatiquement.", "error");
-            nav.push("/admin");
+            await supabase.auth.signOut();
+            localStorage.removeItem("token_pharmacie");
+            localStorage.removeItem("role_pharmacie");
+            showToast("Impossible de créer le compte avec ces informations.", "error");
             return;
           }
         }
       }
     } catch (err) {
       logErreur("Inscription", "initialisation pharmacie post-OTP", err);
+      await supabase.auth.signOut();
+      localStorage.removeItem("token_pharmacie");
+      localStorage.removeItem("role_pharmacie");
+      showToast("Impossible de créer le compte avec ces informations.", "error");
+      return;
     }
 
     showToast("Pharmacie activée et connectée avec succès !", "success");
@@ -166,47 +173,47 @@ export default function Inscription() {
       });
 
       if (authError) {
-        const msg = authError.message ? authError.message.toLowerCase() : "";
-        if (msg.includes("user already registered") || msg.includes("already registered") || msg.includes("email already in use")) {
-          showToast("Cette adresse email est déjà associée à un compte. Veuillez vous connecter.", "error");
-        } else if (msg.includes("password should be at least")) {
-          showToast("Le mot de passe doit contenir au moins 6 caractères.", "error");
-        } else if (msg.includes("invalid format") || msg.includes("unable to validate email")) {
-          showToast("Format d'adresse email invalide.", "error");
-        } else {
-          showToast(authError.message || "Erreur lors de la création du compte.", "error");
-        }
+        logErreur("Inscription", "création du compte pharmacie", authError, {
+          email: emailClean,
+        });
+        showToast("Impossible de créer le compte avec ces informations.", "error");
         return;
       }
 
       if (!authData?.user) {
-        showToast("Création du compte impossible. Veuillez vérifier vos informations.", "error");
+        showToast("Impossible de créer le compte avec ces informations.", "error");
         return;
       }
 
       // Si une session directe a été fournie (ex. confirmation email désactivée)
       if (authData.session) {
-        localStorage.setItem("token_pharmacie", authData.session.access_token);
-        localStorage.setItem("role_pharmacie", "pharmacie");
-
         // Insérer directement le profil
-        try {
-          await supabase.from("pharmacies").insert({
-            nom: tab.nom.trim(),
-            telephone: resultatTelephone.telephone,
-            ville: tab.ville.trim(),
-            emplacement: tab.emplacement ? tab.emplacement.trim() : null,
-            latitude: parseFloat(tab.latitude),
-            longitude: parseFloat(tab.longitude),
-            owner_id: authData.user.id,
-            statut: "actif",
-            etat: "normal",
-            photo: null,
+        const { error: insertError } = await supabase.from("pharmacies").insert({
+          nom: tab.nom.trim(),
+          telephone: resultatTelephone.telephone,
+          ville: tab.ville.trim(),
+          emplacement: tab.emplacement ? tab.emplacement.trim() : null,
+          latitude: parseFloat(tab.latitude),
+          longitude: parseFloat(tab.longitude),
+          owner_id: authData.user.id,
+          statut: "actif",
+          etat: "normal",
+          photo: null,
+        });
+
+        if (insertError && insertError.code !== "23505") {
+          logErreur("Inscription", "insertion directe profil pharmacie", insertError, {
+            ownerId: authData.user.id,
           });
-        } catch (err) {
-          console.warn("Erreur insertion directe profil :", err);
+          await supabase.auth.signOut();
+          localStorage.removeItem("token_pharmacie");
+          localStorage.removeItem("role_pharmacie");
+          showToast("Impossible de créer le compte avec ces informations.", "error");
+          return;
         }
 
+        localStorage.setItem("token_pharmacie", authData.session.access_token);
+        localStorage.setItem("role_pharmacie", "pharmacie");
         showToast("Pharmacie créée et connectée avec succès !", "success");
         nav.push("/admin");
       } else {
@@ -219,7 +226,8 @@ export default function Inscription() {
     try {
       await executerAction(comptePourCreation);
     } catch (error) {
-      showToast(error?.message || "Une erreur est survenue pendant l'inscription.", "error");
+      logErreur("Inscription", "inscription pharmacie", error);
+      showToast("Impossible de créer le compte avec ces informations.", "error");
     }
   };
 

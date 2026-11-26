@@ -43,7 +43,10 @@ export default function Connexion() {
       });
 
       if (error) {
-        showToast(error.message || "Erreur lors de l'envoi de l'e-mail de réinitialisation.", "error");
+        logErreur("Connexion", "envoi du lien de réinitialisation", error, {
+          email: emailToUse,
+        });
+        showToast("Erreur lors de l'envoi de l'e-mail de réinitialisation.", "error");
       } else {
         setShowResetModal(false);
         showToast(`Lien de réinitialisation envoyé à ${emailToUse} ! Vérifiez vos e-mails.`, "success");
@@ -58,14 +61,47 @@ export default function Connexion() {
     }
   };
 
-  const handleOtpSuccess = (session) => {
+  const handleOtpSuccess = async (session, userFromOtp) => {
     setShowOtpModal(false);
-    if (session?.access_token) {
-      localStorage.setItem("token_pharmacie", session.access_token);
-      localStorage.setItem("role_pharmacie", "pharmacie");
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const currentUser = userData?.user || userFromOtp || session?.user;
+
+      if (!currentUser?.id) {
+        await supabase.auth.signOut();
+        localStorage.removeItem("token_pharmacie");
+        localStorage.removeItem("role_pharmacie");
+        showToast("Adresse e-mail ou mot de passe incorrect.", "error");
+        return;
+      }
+
+      const { data: profile, error: profError } = await supabase
+        .from("pharmacies")
+        .select("id")
+        .eq("owner_id", currentUser.id)
+        .maybeSingle();
+
+      if (profError || !profile) {
+        await supabase.auth.signOut();
+        localStorage.removeItem("token_pharmacie");
+        localStorage.removeItem("role_pharmacie");
+        showToast("Adresse e-mail ou mot de passe incorrect.", "error");
+        return;
+      }
+
+      if (session?.access_token) {
+        localStorage.setItem("token_pharmacie", session.access_token);
+        localStorage.setItem("role_pharmacie", "pharmacie");
+      }
+      showToast("Email confirmé ! Redirection en cours...", "success");
+      navigate.push("/admin");
+    } catch (err) {
+      logErreur("Connexion", "vérification profil post-OTP", err);
+      await supabase.auth.signOut();
+      localStorage.removeItem("token_pharmacie");
+      localStorage.removeItem("role_pharmacie");
+      showToast("Adresse e-mail ou mot de passe incorrect.", "error");
     }
-    showToast("Email confirmé ! Redirection en cours...", "success");
-    navigate.push("/admin");
   };
 
   const enregistrement = (e) => {
@@ -92,10 +128,8 @@ export default function Connexion() {
             setPendingEmail(emailClean);
             setShowOtpModal(true);
             showToast("Votre email n'est pas encore confirmé. Entrez le code reçu ci-dessous.", "info");
-          } else if (errMsg.toLowerCase().includes("invalid login credentials") || errMsg.toLowerCase().includes("invalid_credentials")) {
-            showToast("Email ou mot de passe incorrect.", "error");
           } else {
-            showToast(errMsg || "Identifiants incorrects.", "error");
+            showToast("Adresse e-mail ou mot de passe incorrect.", "error");
           }
           return;
         }
@@ -108,8 +142,10 @@ export default function Connexion() {
             .maybeSingle();
 
           if (profError || !profile) {
-            showToast("Accès interdit : aucun profil pharmacie trouvé pour ce compte.", "error");
             await supabase.auth.signOut();
+            localStorage.removeItem("token_pharmacie");
+            localStorage.removeItem("role_pharmacie");
+            showToast("Adresse e-mail ou mot de passe incorrect.", "error");
             return;
           }
 
@@ -118,7 +154,7 @@ export default function Connexion() {
           showToast("Connexion réussie !", "success");
           navigate.push("/admin");
         } else {
-          showToast("Connexion échouée.", "error");
+          showToast("Adresse e-mail ou mot de passe incorrect.", "error");
         }
       } catch (error) {
         logErreur("Connexion", "authentification pharmacie", error, {

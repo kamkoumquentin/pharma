@@ -32,7 +32,10 @@ export default function OtpModal({ isOpen, email, onSuccess, onClose }) {
       });
 
       if (error) {
-        showToast(error.message || "Code incorrect ou expiré.", "error");
+        logErreur("OtpModal", "vérification du code OTP", error, {
+          email: email?.trim().toLowerCase(),
+        });
+        showToast("Code incorrect ou expiré.", "error");
         return;
       }
 
@@ -59,7 +62,10 @@ export default function OtpModal({ isOpen, email, onSuccess, onClose }) {
       });
 
       if (error) {
-        showToast(error.message || "Impossible de renvoyer le code pour le moment.", "error");
+        logErreur("OtpModal", "renvoi du code OTP", error, {
+          email: email?.trim().toLowerCase(),
+        });
+        showToast("Impossible de renvoyer le code pour le moment.", "error");
       } else {
         showToast("Nouveau code envoyé par email !", "success");
       }

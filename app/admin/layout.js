@@ -248,7 +248,9 @@ export default function AdminLayout({ children }) {
 
         let profile = null;
         let profError = null;
-        const maxAttempts = 5;
+        const meta = user.user_metadata || {};
+        const estComptePharmacieMeta = meta.role === "pharmacie";
+        const maxAttempts = estComptePharmacieMeta ? 5 : 1;
 
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           const res = await supabase
@@ -269,9 +271,8 @@ export default function AdminLayout({ children }) {
 
         if (!actif) return;
 
-        // Si aucun profil n'a été trouvé, tenter une auto-création à partir des métadonnées
-        if (!profile && !profError) {
-          const meta = user.user_metadata || {};
+        // Si aucun profil n'a été trouvé, tenter une auto-création uniquement pour un compte pharmacie
+        if (!profile && !profError && estComptePharmacieMeta) {
           const nomPharma = meta.nom || meta.pharmacie_nom;
 
           if (nomPharma) {
@@ -309,25 +310,18 @@ export default function AdminLayout({ children }) {
                 ownerId: user.id,
               });
             }
-          } else {
-            showToast("Votre compte est activé mais votre profil pharmacie est incomplet. Veuillez contacter le support ou compléter votre inscription.", "error");
-            await supabase.auth.signOut();
-            viderCacheDemandes();
-            viderCacheMessagerie();
-            localStorage.removeItem("token_pharmacie");
-            nav.push("/admin/connexion");
-            return;
           }
         }
 
         if (!actif) return;
 
         if (profError || !profile) {
-          showToast("Accès interdit : cette interface est réservée aux pharmaciens.", "error");
           await supabase.auth.signOut();
           viderCacheDemandes();
           viderCacheMessagerie();
           localStorage.removeItem("token_pharmacie");
+          localStorage.removeItem("role_pharmacie");
+          showToast("Adresse e-mail ou mot de passe incorrect.", "error");
           nav.push("/admin/connexion");
           return;
         }
