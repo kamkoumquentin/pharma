@@ -21,6 +21,7 @@ import {
   BellAlertIcon,
   SpeakerWaveIcon,
   SpeakerXMarkIcon,
+  ClipboardDocumentListIcon,
 } from "@heroicons/react/24/outline";
 import { supabase } from "@/app/lib/supabaseClient";
 import { logErreur } from "@/app/lib/logger";
@@ -57,6 +58,7 @@ const estStatutSuspendu = (statut) => statutsSuspendus.has(
 
 const NAV_ITEMS = [
   { href: "/admin", label: "Tableau de bord", icon: ChartBarSquareIcon, exact: true },
+  { href: "/admin/activite", label: "Mon activité", icon: ClipboardDocumentListIcon },
   { href: "/admin/stock", label: "Voir le stock", icon: Squares2X2Icon },
   { href: "/admin/ajouter", label: "Ajouter un médicament", icon: PlusCircleIcon },
   { href: "/admin/import", label: "Importation automatique", icon: DocumentTextIcon },
@@ -69,6 +71,7 @@ const NAV_ITEMS = [
 
 function titreEntete(pathname) {
   if (!pathname || pathname === "/admin") return "Tableau de bord";
+  if (pathname.startsWith("/admin/activite")) return "Mon activité";
   if (pathname.startsWith("/admin/stock")) return "Gestion du Stock";
   if (pathname.startsWith("/admin/ajouter")) return "Ajouter un Médicament";
   if (pathname.startsWith("/admin/import")) return "Importation automatique";

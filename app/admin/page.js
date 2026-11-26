@@ -6,6 +6,7 @@ import { useAdmin } from "@/app/admin/AdminContext";
 
 const ROUTES_PAR_ID = {
   dashboard: "/admin",
+  activite: "/admin/activite",
   l: "/admin/stock",
   p: "/admin/stock",
   a: "/admin/ajouter",
