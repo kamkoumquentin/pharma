@@ -9,6 +9,16 @@ import {
 import { supabase } from "@/app/lib/supabaseClient";
 import { logErreur } from "@/app/lib/logger";
 import { useToast } from "@/app/components/Toast";
+import {
+  ASPECT_RATIO_4_3,
+  BUCKET_PHARMACIE_PHOTOS,
+  chargerImageOrientee,
+  extraireCheminStorage,
+  formaterErreurEnvoiPhoto,
+  formaterTailleKo,
+  genererPhotoRecadree4x3,
+  validerFichierPhoto,
+} from "@/app/lib/photoPharmacie";
 
 const MedicalMapPinIcon = ({ className = "w-5 h-5" }) => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -34,12 +44,21 @@ export default function Modification({
     lng: info?.longitude ?? null,
   });
   const [photo, setPhoto] = useState(null);
-  const [photoName, setPhotoName] = useState("");
+  const [photoMeta, setPhotoMeta] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(info?.photo || "");
+  const [sourcePreviewUrl, setSourcePreviewUrl] = useState("");
+  const [sourceDimensions, setSourceDimensions] = useState(null);
+  const [cropOffset, setCropOffset] = useState({ x: 0.5, y: 0.5 });
+  const [photoError, setPhotoError] = useState("");
+  const [photoProcessing, setPhotoProcessing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [gpsLoading, setGpsLoading] = useState(false);
-  
+
   const fileInputRef = useRef(null);
+  const previewBoxRef = useRef(null);
+  const sourceImageRef = useRef(null);
+  const dragStateRef = useRef(null);
+  const cropOffsetRef = useRef({ x: 0.5, y: 0.5 });
   const showToast = useToast();
 
   const valeursInitiales = useMemo(() => ({
@@ -60,15 +79,46 @@ export default function Modification({
     photo
   );
 
+  const nettoyerEditionPhoto = useCallback(() => {
+    if (sourceImageRef.current) {
+      sourceImageRef.current.cleanup?.();
+      sourceImageRef.current = null;
+    }
+    setSourcePreviewUrl((prev) => {
+      if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+      return "";
+    });
+    setPhotoPreview((prev) => {
+      if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+      return info?.photo || "";
+    });
+    setPhoto(null);
+    setPhotoMeta(null);
+    setSourceDimensions(null);
+    setCropOffset({ x: 0.5, y: 0.5 });
+    cropOffsetRef.current = { x: 0.5, y: 0.5 };
+    setPhotoError("");
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }, [info?.photo]);
+
+  useEffect(() => {
+    return () => {
+      if (sourceImageRef.current) {
+        sourceImageRef.current.cleanup?.();
+        sourceImageRef.current = null;
+      }
+    };
+  }, []);
+
   const annuler = useCallback(() => {
     setNom(info?.nom || "");
     setVille(info?.ville || "");
     setEmplacement(info?.emplacement || "");
     setCoordonnees({ lat: info?.latitude ?? null, lng: info?.longitude ?? null });
-    setPhoto(null);
-    setPhotoName("");
-    setPhotoPreview(info?.photo || "");
-  }, [info]);
+    nettoyerEditionPhoto();
+  }, [info, nettoyerEditionPhoto]);
 
   const sauvegarder = useCallback(async () => {
     if (!info?.id) {
@@ -93,30 +143,46 @@ export default function Modification({
         modifications.longitude = parseFloat(coordonnees.lng);
       }
 
-      let erreurLogo = null;
+      let nouveauCheminStorage = null;
+      const anciennePhotoUrl = valeursInitiales.photo;
       if (section === "general" && photo) {
         try {
-          const ext = photo.name.split(".").pop();
-          const filename = `logos/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
+          const ext = photo.type === "image/webp" ? "webp" : "jpg";
+          const filename = `${info.id}/devanture-${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
           const { error: upErr } = await supabase.storage
-            .from("pharmacie-photos")
-            .upload(filename, photo);
+            .from(BUCKET_PHARMACIE_PHOTOS)
+            .upload(filename, photo, {
+              contentType: photo.type,
+              upsert: false,
+            });
 
           if (upErr) {
-            erreurLogo = upErr.message || "le stockage a refusé l’envoi";
-          } else {
-            const { data: urlData } = supabase.storage
-              .from("pharmacie-photos")
-              .getPublicUrl(filename);
-            if (urlData?.publicUrl) modifications.photo = urlData.publicUrl;
-            else erreurLogo = "URL publique du logo indisponible";
+            const msg = formaterErreurEnvoiPhoto(upErr);
+            setPhotoError(msg);
+            return { success: false, error: msg };
           }
+
+          nouveauCheminStorage = filename;
+          const { data: urlData } = supabase.storage
+            .from(BUCKET_PHARMACIE_PHOTOS)
+            .getPublicUrl(filename);
+
+          if (!urlData?.publicUrl) {
+            await supabase.storage.from(BUCKET_PHARMACIE_PHOTOS).remove([filename]);
+            const msg = "URL publique de la photo indisponible.";
+            setPhotoError(msg);
+            return { success: false, error: msg };
+          }
+
+          modifications.photo = urlData.publicUrl;
         } catch (storageErr) {
-          logErreur("ModifierProfil", "téléversement du logo de la pharmacie", storageErr, {
+          logErreur("ModifierProfil", "téléversement de la photo de la pharmacie", storageErr, {
             pharmacieId: info.id,
             section,
           });
-          erreurLogo = storageErr?.message || "erreur inattendue pendant l’envoi";
+          const msg = formaterErreurEnvoiPhoto(storageErr);
+          setPhotoError(msg);
+          return { success: false, error: msg };
         }
       }
 
@@ -128,26 +194,61 @@ export default function Modification({
         .single();
 
       if (updateErr) {
+        if (nouveauCheminStorage) {
+          await supabase.storage
+            .from(BUCKET_PHARMACIE_PHOTOS)
+            .remove([nouveauCheminStorage])
+            .catch(() => {});
+        }
         logErreur("ModifierProfil", "mise à jour du profil pharmacie", updateErr, {
           pharmacieId: info.id,
           section,
         });
         return {
           success: false,
-          error: erreurLogo
-            ? `Le logo n’a pas pu être envoyé (${erreurLogo}) et aucune modification n’a été enregistrée.`
-            : updateErr.message || "Échec de l’enregistrement des modifications.",
+          error: formaterErreurEnvoiPhoto(updateErr),
         };
       }
 
+      if (nouveauCheminStorage && anciennePhotoUrl) {
+        const ancienChemin = extraireCheminStorage(anciennePhotoUrl, BUCKET_PHARMACIE_PHOTOS);
+        if (ancienChemin && ancienChemin !== nouveauCheminStorage) {
+          const { error: delErr } = await supabase.storage
+            .from(BUCKET_PHARMACIE_PHOTOS)
+            .remove([ancienChemin]);
+          if (delErr) {
+            logErreur("ModifierProfil", "suppression de l'ancienne photo", delErr, {
+              pharmacieId: info.id,
+              ancienChemin,
+            });
+          }
+        }
+      }
+
       onUpdate?.(updatedData);
-      if (section === "general" && !erreurLogo) {
+      if (section === "general") {
         setNom(updatedData.nom || "");
+        if (sourceImageRef.current) {
+          sourceImageRef.current.cleanup?.();
+          sourceImageRef.current = null;
+        }
+        setSourcePreviewUrl((prev) => {
+          if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+          return "";
+        });
+        setPhotoPreview((prev) => {
+          if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+          return updatedData.photo || "";
+        });
         setPhoto(null);
-        setPhotoName("");
-        setPhotoPreview(updatedData.photo || "");
-      } else if (section === "general") {
-        setNom(updatedData.nom || "");
+        setPhotoMeta(null);
+        setSourceDimensions(null);
+        setCropOffset({ x: 0.5, y: 0.5 });
+        cropOffsetRef.current = { x: 0.5, y: 0.5 };
+        setPhotoError("");
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
       } else {
         setVille(updatedData.ville || "");
         setEmplacement(updatedData.emplacement || "");
@@ -156,20 +257,17 @@ export default function Modification({
           lng: updatedData.longitude ?? null,
         });
       }
-      return {
-        success: true,
-        warning: erreurLogo ? `Le logo n’a pas pu être envoyé (${erreurLogo}).` : "",
-      };
+      return { success: true };
     } catch (error) {
       logErreur("ModifierProfil", "sauvegarde du profil pharmacie", error, {
         pharmacieId: info.id,
         section,
       });
-      return { success: false, error: error?.message || "Erreur lors de la sauvegarde." };
+      return { success: false, error: formaterErreurEnvoiPhoto(error) };
     } finally {
       setLoading(false);
     }
-  }, [coordonnees.lat, coordonnees.lng, emplacement, info, nom, onUpdate, photo, section, ville]);
+  }, [coordonnees.lat, coordonnees.lng, emplacement, info, nom, onUpdate, photo, section, valeursInitiales.photo, ville]);
 
   useEffect(() => {
     onTabStateChange?.(section, { dirty: estModifie, cancel: annuler, save: sauvegarder, loading });
@@ -211,12 +309,130 @@ export default function Modification({
     }
   };
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setPhoto(file);
-      setPhotoName(file.name);
-      setPhotoPreview(URL.createObjectURL(file));
+  const regenererApercuRecadre = useCallback(async (offset) => {
+    const imgData = sourceImageRef.current;
+    if (!imgData) return;
+    try {
+      const resultat = await genererPhotoRecadree4x3(
+        imgData.source,
+        imgData.width,
+        imgData.height,
+        offset
+      );
+      setPhoto(resultat.file);
+      setPhotoMeta({
+        width: resultat.width,
+        height: resultat.height,
+        size: resultat.size,
+        format: resultat.mimeType === "image/webp" ? "WebP" : "JPEG",
+      });
+      setPhotoPreview((prev) => {
+        if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(resultat.blob);
+      });
+    } catch (err) {
+      setPhotoError(err?.message || "Impossible de recadrer cette image.");
+    }
+  }, []);
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const validation = validerFichierPhoto(file);
+    if (!validation.valide) {
+      setPhotoError(validation.erreur);
+      showToast(validation.erreur, "error");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
+    setPhotoProcessing(true);
+    setPhotoError("");
+    try {
+      const chargee = await chargerImageOrientee(file);
+      if (sourceImageRef.current) {
+        sourceImageRef.current.cleanup?.();
+      }
+      sourceImageRef.current = chargee;
+
+      const offsetInitial = { x: 0.5, y: 0.5 };
+      setCropOffset(offsetInitial);
+      cropOffsetRef.current = offsetInitial;
+      setSourceDimensions({ width: chargee.width, height: chargee.height });
+      setSourcePreviewUrl((prev) => {
+        if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(file);
+      });
+
+      await regenererApercuRecadre(offsetInitial);
+    } catch (err) {
+      const msg = err?.message || "Impossible de charger cette image.";
+      setPhotoError(msg);
+      showToast(msg, "error");
+    } finally {
+      setPhotoProcessing(false);
+    }
+  };
+
+  const estRecadrageDeplacable = Boolean(
+    sourceDimensions &&
+      Math.abs(sourceDimensions.width / sourceDimensions.height - ASPECT_RATIO_4_3) > 0.015
+  );
+
+  const handlePreviewPointerDown = (e) => {
+    if (!estRecadrageDeplacable || !previewBoxRef.current || !sourceDimensions) return;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    dragStateRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startOffset: cropOffsetRef.current,
+    };
+  };
+
+  const handlePreviewPointerMove = (e) => {
+    if (!dragStateRef.current || !previewBoxRef.current || !sourceDimensions) return;
+    const rect = previewBoxRef.current.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const imgRatio = sourceDimensions.width / sourceDimensions.height;
+    const { startX, startY, startOffset } = dragStateRef.current;
+    let nextX = startOffset.x;
+    let nextY = startOffset.y;
+
+    if (imgRatio > ASPECT_RATIO_4_3) {
+      const renderedWidth = rect.height * imgRatio;
+      const overflowX = renderedWidth - rect.width;
+      if (overflowX > 1) {
+        nextX = Math.min(1, Math.max(0, startOffset.x - (e.clientX - startX) / overflowX));
+      }
+    } else {
+      const renderedHeight = rect.width / imgRatio;
+      const overflowY = renderedHeight - rect.height;
+      if (overflowY > 1) {
+        nextY = Math.min(1, Math.max(0, startOffset.y - (e.clientY - startY) / overflowY));
+      }
+    }
+
+    const next = { x: nextX, y: nextY };
+    cropOffsetRef.current = next;
+    setCropOffset(next);
+  };
+
+  const handlePreviewPointerEnd = () => {
+    if (!dragStateRef.current) return;
+    dragStateRef.current = null;
+    regenererApercuRecadre(cropOffsetRef.current);
+  };
+
+  const enregistrerPhoto = async () => {
+    const result = await sauvegarder();
+    if (embedded) {
+      showToast(
+        result.success ? "Photo de la devanture enregistrée." : result.error,
+        result.success ? "success" : "error",
+        result.success ? 4000 : 7000
+      );
     }
   };
 
@@ -249,32 +465,147 @@ export default function Modification({
             placeholder="Nouveau nom" 
           />
         </div>
-        <div className="flex flex-col space-y-1">
+        <div className="flex flex-col space-y-2">
           <label className="text-xs font-semibold text-emerald-800 uppercase tracking-wide px-1">
-            Logo de la pharmacie
+            Photo de la pharmacie
           </label>
+          <p className="px-1 text-xs leading-relaxed text-gray-600">
+            Photo de la devanture : prise de face, enseigne visible, en pleine journée, en format paysage. Elle aide les clients à vous reconnaître dans la rue.
+          </p>
           <input
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp"
             ref={fileInputRef}
             onChange={handleFileChange}
             className="hidden"
           />
-          <div className="flex items-center gap-4">
-            <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
-              {photoPreview
-                ? <img src={photoPreview} alt="Aperçu du logo" className="h-full w-full object-cover" />
-                : <div className="flex h-full items-center justify-center text-xs text-gray-400">Logo</div>}
-            </div>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="rounded-lg border border-emerald-200 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50"
+
+          {photoError && (
+            <div
+              role="alert"
+              className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-medium text-red-700"
             >
-              Choisir un nouveau logo
-            </button>
-            {photoName && <span className="truncate text-xs text-gray-500">{photoName}</span>}
-          </div>
+              {photoError}
+            </div>
+          )}
+
+          {photo && sourcePreviewUrl ? (
+            <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/20 p-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                    Aperçu client (4:3 paysage)
+                  </span>
+                  <div
+                    ref={previewBoxRef}
+                    onPointerDown={handlePreviewPointerDown}
+                    onPointerMove={handlePreviewPointerMove}
+                    onPointerUp={handlePreviewPointerEnd}
+                    onPointerCancel={handlePreviewPointerEnd}
+                    className={`relative aspect-[4/3] w-full overflow-hidden rounded-xl border border-gray-200 bg-gray-100 select-none touch-none ${
+                      estRecadrageDeplacable ? "cursor-grab active:cursor-grabbing" : ""
+                    }`}
+                  >
+                    <img
+                      src={sourcePreviewUrl}
+                      alt="Aperçu 4:3 de la devanture"
+                      draggable={false}
+                      style={{
+                        objectPosition: `${cropOffset.x * 100}% ${cropOffset.y * 100}%`,
+                      }}
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                  {estRecadrageDeplacable && (
+                    <p className="text-[11px] text-gray-500">
+                      Faites glisser l&apos;image pour ajuster le cadrage.
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex shrink-0 flex-col items-start space-y-1.5">
+                  <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                    Liste Mediskip (80×80)
+                  </span>
+                  <div className="h-20 w-20 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xs">
+                    {photoPreview && (
+                      <img
+                        src={photoPreview}
+                        alt="Vignette carrée 80 par 80"
+                        className="h-full w-full object-cover"
+                      />
+                    )}
+                  </div>
+                  {photoMeta && (
+                    <span className="text-[11px] text-gray-500">
+                      {photoMeta.width}×{photoMeta.height} · {formaterTailleKo(photoMeta.size)} · {photoMeta.format}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={enregistrerPhoto}
+                  disabled={loading || photoProcessing}
+                  className="rounded-xl bg-emerald-700 px-4 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:opacity-50"
+                >
+                  {loading ? "Enregistrement..." : "Enregistrer"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={loading || photoProcessing}
+                  className="rounded-xl border border-emerald-200 bg-white px-4 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-50 disabled:opacity-50"
+                >
+                  Choisir une autre photo
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="aspect-[4/3] w-32 shrink-0 overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
+                {photoPreview ? (
+                  <img
+                    src={photoPreview}
+                    alt="Photo actuelle de la pharmacie"
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-xs text-gray-400">
+                    Aucune photo
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-col items-start gap-2">
+                {photoPreview && (
+                  <div className="flex items-center gap-2">
+                    <div className="h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
+                      <img
+                        src={photoPreview}
+                        alt="Vignette carrée actuelle"
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                    <span className="text-[11px] text-gray-500">Vignette 80×80</span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={photoProcessing || loading}
+                  className="rounded-lg border border-emerald-200 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50"
+                >
+                  {photoProcessing
+                    ? "Traitement de l'image..."
+                    : photoPreview
+                      ? "Choisir une autre photo"
+                      : "Choisir une photo"}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
         </>}
 
